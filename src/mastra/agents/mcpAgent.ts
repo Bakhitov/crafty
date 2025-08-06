@@ -2,13 +2,7 @@ import { Agent } from "@mastra/core/agent";
 import { openai } from "@ai-sdk/openai";
 import { mcp } from "../mcp";
 import { Memory } from '@mastra/memory';
-import { PostgresStore } from '@mastra/pg';
 
-const memory = new Memory({
-  storage: new PostgresStore({
-    connectionString: process.env.DATABASE_URL || '',
-  }),
-});
 
 // Create an agent and add tools from the MCP client
 export const mcpAgent = new Agent({
@@ -134,5 +128,5 @@ n8n_update_partial_workflow({
 - FIX all errors before proceeding`,
   model: openai("gpt-4o-mini"),
   tools: await mcp.getTools(),
-  memory,
+  memory: new Memory(),
 });
