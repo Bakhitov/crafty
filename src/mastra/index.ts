@@ -5,13 +5,17 @@ import { mcpAgent } from './agents/mcpAgent';
 import { PostgresStore } from '@mastra/pg';
 import { TelegramIntegration } from './integrations/telegram';
 
+// Export tools
+export { n8nActivateTool } from './tools/n8n-activate-tool';
+export { weatherTool } from './tools/weather-tool';
+
 const storage = new PostgresStore({
   connectionString: process.env.DATABASE_URL || "postgresql://user:pass@host:5432/dbname",
 });
 
 export const mastra = new Mastra({
   storage,
-  agents: { mcpAgent},
+  agents: { mcpAgent },
   logger: new PinoLogger({
     name: 'Mastra',
     level: 'info',

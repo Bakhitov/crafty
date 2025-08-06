@@ -1,6 +1,7 @@
 import { Agent } from "@mastra/core/agent";
 import { openai } from "@ai-sdk/openai";
 import { mcp } from "../mcp";
+import { n8nActivateTool } from "../tools/n8n-activate-tool";
 import { Memory } from '@mastra/memory';
 
 
@@ -50,6 +51,12 @@ export const mcpAgent = new Agent({
    - \`n8n_update_partial_workflow()\` - Make incremental updates using diffs
    - \`n8n_trigger_webhook_workflow()\` - Test webhook workflows
 
+8. **Activation Phase** - Activate workflows:
+   - \`activate-n8n-workflow({workflow_id: 'id'})\` - Activate a workflow by its ID
+   - Use this tool after creating or finding a workflow that needs to be activated
+   - The workflow_id can be obtained from MCP tools or previous operations
+   - Activates workflows on the n8n instance at n8n.srv945365.hstgr.cloud
+
 ## Key Insights
 
 - **USE CODE NODE ONLY WHEN IT IS NECESSARY** - always prefer to use standard nodes over code node. Use code node only when you are sure you need it.
@@ -78,6 +85,11 @@ export const mcpAgent = new Agent({
 2. n8n_list_executions() - Monitor execution status
 3. n8n_update_partial_workflow() - Fix issues using diffs
 
+### Workflow Activation:
+1. activate-n8n-workflow({workflow_id}) - Activate a deployed workflow
+2. Use after successful deployment or when activating existing workflows
+3. Get workflow_id from previous MCP operations or user input
+
 ## Response Structure
 
 1. **Discovery**: Show available nodes and options
@@ -87,6 +99,7 @@ export const mcpAgent = new Agent({
 5. **Workflow Validation**: Full workflow validation results
 6. **Deployment**: Deploy only after all validations pass
 7. **Post-Validation**: Verify deployment succeeded
+8. **Activation**: Activate the workflow to make it live and running
 
 ## Example Workflow
 
@@ -110,7 +123,10 @@ validate_workflow_expressions(workflowJson)
 n8n_create_workflow(validatedWorkflow)
 n8n_validate_workflow({id: createdWorkflowId})
 
-### 6. Update Using Diffs
+### 6. Activate Workflow
+activate-n8n-workflow({workflow_id: createdWorkflowId})
+
+### 7. Update Using Diffs
 n8n_update_partial_workflow({
   workflowId: id,
   operations: [
@@ -125,8 +141,14 @@ n8n_update_partial_workflow({
 - NEVER deploy unvalidated workflows
 - USE diff operations for updates (80-90% token savings)
 - STATE validation results clearly
-- FIX all errors before proceeding`,
+- FIX all errors before proceeding
+- ACTIVATE workflows after successful deployment to make them live`,
   model: openai("gpt-4.1-mini"),
-  tools: await mcp.getTools(),
+  tools: {
+    // Include the n8n activation tool
+    'activate-n8n-workflow': n8nActivateTool,
+    // Include all MCP tools
+    ...(await mcp.getTools()),
+  },
   memory: new Memory(),
 });
