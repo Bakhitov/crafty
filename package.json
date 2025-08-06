@@ -23,6 +23,7 @@
     "@mastra/loggers": "^0.10.6",
     "@mastra/mcp": "^0.10.10",
     "@mastra/memory": "^0.12.1",
+    "@mastra/pg": "^0.13.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {
