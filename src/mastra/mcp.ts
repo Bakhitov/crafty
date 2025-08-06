@@ -8,7 +8,7 @@ export const mcp = new MCPClient({
       "args": [
         "-y",
         "mcp-remote",
-        "https://czlonkowskin8n-mcp-railwaylatest-production-b48b.up.railway.app/mcp",
+        "https://czlonkowskin8n-mcp-railwaylatest-production-d736.up.railway.app/mcp",
         "--header",
         "Authorization: Bearer APLrZxK+eeREs52rbHtIP5JFA03cKR8T8MycVml9wVU="
       ]
