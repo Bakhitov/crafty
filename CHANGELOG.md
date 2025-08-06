@@ -7,6 +7,7 @@
 ### Изменено
 - **src/mastra/agents/mcpAgent.ts**: Обновлено название агента с "Agent with MCP Tools" на "Agent with n8n MCP Tools"
 - **src/mastra/agents/mcpAgent.ts**: Изменена модель с "gpt-4o-mini" на "gpt-4.1-mini"
+- **src/mastra/mcp.ts**: Обновлен URL MCP клиента на новый Railway deployment endpoint (b48b → d736)
 
 ---
 
