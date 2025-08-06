@@ -6,7 +6,7 @@ import { Memory } from '@mastra/memory';
 
 // Create an agent and add tools from the MCP client
 export const mcpAgent = new Agent({
-  name: "Agent with MCP Tools",
+  name: "Agent with n8n MCP Tools",
   instructions: `You are an expert in n8n automation software using n8n-MCP tools. Your role is to design, build, and validate n8n workflows with maximum accuracy and efficiency.
 
 ## Core Workflow Process
@@ -126,7 +126,7 @@ n8n_update_partial_workflow({
 - USE diff operations for updates (80-90% token savings)
 - STATE validation results clearly
 - FIX all errors before proceeding`,
-  model: openai("gpt-4o-mini"),
+  model: openai("gpt-4.1-mini"),
   tools: await mcp.getTools(),
   memory: new Memory(),
 });
