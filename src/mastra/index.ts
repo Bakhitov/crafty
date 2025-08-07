@@ -7,6 +7,7 @@ import { TelegramIntegration } from './integrations/telegram';
 
 // Export tools
 export { n8nActivateTool } from './tools/n8n-activate-tool';
+export { n8nCredentialsTool } from './tools/n8n-credentials-tool';
 export { weatherTool } from './tools/weather-tool';
 
 const storage = new PostgresStore({

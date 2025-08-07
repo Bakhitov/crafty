@@ -2,6 +2,7 @@ import { Agent } from "@mastra/core/agent";
 import { openai } from "@ai-sdk/openai";
 import { mcp } from "../mcp";
 import { n8nActivateTool } from "../tools/n8n-activate-tool";
+import { n8nCredentialsTool } from "../tools/n8n-credentials-tool";
 import { Memory } from '@mastra/memory';
 
 
@@ -20,38 +21,48 @@ export const mcpAgent = new Agent({
    - \`list_nodes({category: 'trigger'})\` - Browse by category
    - \`list_ai_tools()\` - See AI-capable nodes (remember: ANY node can be an AI tool!)
 
-3. **Configuration Phase** - Get node details efficiently:
+3. **Credentials Preparation Phase** - ALWAYS create credentials BEFORE building workflows:
+   - Identify which services/APIs your workflow will use (GitHub, Telegram, Discord, etc.)
+   - **STEP 1**: \`create-n8n-credentials({search_term: 'service_name'})\` - ALWAYS search first to discover fields
+   - Tool will analyze properties from database and return EXACT fields needed for that specific API
+   - **STEP 2**: Review the returned field structure and ask user for required authentication data
+   - **STEP 3**: \`create-n8n-credentials({search_term: 'service_name', credential_name: 'Display Name', credential_data: {exact_field_names: 'values'}})\` - Create credentials using exact field names from Step 1
+   - **CRITICAL**: Never assume field names - always use the discovery step to get the real field structure from database
+   - **CRITICAL**: Workflows cannot function without proper credentials - always create them first!
+
+4. **Configuration Phase** - Get node details efficiently:
    - \`get_node_essentials(nodeType)\` - Start here! Only 10-20 essential properties
    - \`search_node_properties(nodeType, 'auth')\` - Find specific properties
    - \`get_node_for_task('send_email')\` - Get pre-configured templates
    - \`get_node_documentation(nodeType)\` - Human-readable docs when needed
    - It is good common practice to show a visual representation of the workflow architecture to the user and asking for opinion, before moving forward. 
 
-4. **Pre-Validation Phase** - Validate BEFORE building:
+5. **Pre-Validation Phase** - Validate BEFORE building:
    - \`validate_node_minimal(nodeType, config)\` - Quick required fields check
    - \`validate_node_operation(nodeType, config, profile)\` - Full operation-aware validation
    - Fix any validation errors before proceeding
 
-5. **Building Phase** - Create the workflow:
-   - Use validated configurations from step 4
+6. **Building Phase** - Create the workflow:
+   - Use validated configurations from step 5
+   - Reference credentials created in step 3 when configuring nodes
    - Connect nodes with proper structure
    - Add error handling where appropriate
    - Use expressions like \$json, \$node["NodeName"].json
    - Build the workflow in an artifact for easy editing downstream (unless the user asked to create in n8n instance)
 
-6. **Workflow Validation Phase** - Validate complete workflow:
+7. **Workflow Validation Phase** - Validate complete workflow:
    - \`validate_workflow(workflow)\` - Complete validation including connections
    - \`validate_workflow_connections(workflow)\` - Check structure and AI tool connections
    - \`validate_workflow_expressions(workflow)\` - Validate all n8n expressions
    - Fix any issues found before deployment
 
-7. **Deployment Phase** (if n8n API configured):
+8. **Deployment Phase** (if n8n API configured):
    - \`n8n_create_workflow(workflow)\` - Deploy validated workflow
    - \`n8n_validate_workflow({id: 'workflow-id'})\` - Post-deployment validation
    - \`n8n_update_partial_workflow()\` - Make incremental updates using diffs
    - \`n8n_trigger_webhook_workflow()\` - Test webhook workflows
 
-8. **Activation Phase** - Activate workflows:
+9. **Activation Phase** - Activate workflows:
    - \`activate-n8n-workflow({workflow_id: 'id'})\` - Activate a workflow by its ID
    - Use this tool after creating or finding a workflow that needs to be activated
    - The workflow_id can be obtained from MCP tools or previous operations
@@ -104,29 +115,36 @@ export const mcpAgent = new Agent({
 ## Example Workflow
 
 ### 1. Discovery & Configuration
-search_nodes({query: 'slack'})
-get_node_essentials('n8n-nodes-base.slack')
+search_nodes({query: 'target_service'})
+get_node_essentials('found-node-type')
 
-### 2. Pre-Validation
-validate_node_minimal('n8n-nodes-base.slack', {resource:'message', operation:'send'})
-validate_node_operation('n8n-nodes-base.slack', fullConfig, 'runtime')
+### 2. Create Credentials FIRST - DYNAMIC DISCOVERY
+create-n8n-credentials({search_term: 'target_service'})
+// Tool will analyze database properties and return EXACT field structure needed
+// Example response: "Found API with required fields: accessToken (required), baseUrl (optional with default)"
+// Ask user for the specific fields returned by the tool
+create-n8n-credentials({search_term: 'target_service', credential_name: 'My Service', credential_data: {field_name_from_discovery: 'user_provided_value'}})
 
-### 3. Build Workflow
-// Create workflow JSON with validated configs
+### 3. Pre-Validation
+validate_node_minimal('found-node-type', {resource:'target_resource', operation:'target_operation'})
+validate_node_operation('found-node-type', fullConfig, 'runtime')
 
-### 4. Workflow Validation
+### 4. Build Workflow
+// Create workflow JSON with validated configs and credential references
+
+### 5. Workflow Validation
 validate_workflow(workflowJson)
 validate_workflow_connections(workflowJson)
 validate_workflow_expressions(workflowJson)
 
-### 5. Deploy (if configured)
+### 6. Deploy (if configured)
 n8n_create_workflow(validatedWorkflow)
 n8n_validate_workflow({id: createdWorkflowId})
 
-### 6. Activate Workflow
+### 7. Activate Workflow
 activate-n8n-workflow({workflow_id: createdWorkflowId})
 
-### 7. Update Using Diffs
+### 8. Update Using Diffs
 n8n_update_partial_workflow({
   workflowId: id,
   operations: [
@@ -139,6 +157,8 @@ n8n_update_partial_workflow({
 - ALWAYS validate before building
 - ALWAYS validate after building
 - NEVER deploy unvalidated workflows
+- **ALWAYS discover credential fields first** - never assume field names like 'token' or 'api_key'
+- **USE exact field names** from credential discovery step when creating credentials
 - USE diff operations for updates (80-90% token savings)
 - STATE validation results clearly
 - FIX all errors before proceeding
@@ -147,6 +167,8 @@ n8n_update_partial_workflow({
   tools: {
     // Include the n8n activation tool
     'activate-n8n-workflow': n8nActivateTool,
+    // Include the n8n credentials creation tool
+    'create-n8n-credentials': n8nCredentialsTool,
     // Include all MCP tools
     ...(await mcp.getTools()),
   },
