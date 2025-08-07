@@ -227,10 +227,14 @@ export class TelegramIntegration {
       // Store tool call and result temporarily
       let currentToolCall: { toolName: string; args: any } | null = null;
 
+      // Generate threadId as chatId_timestamp
+      const timestamp = Date.now().toString();
+      const threadId = `${chatId}_${timestamp}`;
+      
       // Stream response using the agent
       const stream = await mcpAgent.stream(text, {
-        threadId: `telegram-${chatId}`, // Use chat ID as thread ID
-        resourceId: userId, // Use user ID as resource ID
+        threadId: threadId, // Use chatId + timestamp as thread ID
+        resourceId: "mcpAgent", // Use agent variable name as resource ID
         context: [
           {
             role: "system",
@@ -256,7 +260,6 @@ export class TelegramIntegration {
               toolName: chunk.toolName,
               args: chunk.args
             };
-            console.log(`Tool call: ${chunk.toolName}`, chunk.args);
             // Don't show tool details in chat
             break;
 
@@ -295,7 +298,6 @@ export class TelegramIntegration {
               });
               currentToolCall = null; // Reset
             }
-            console.log("Tool result:", chunk.result);
             // Don't show tool results in chat
             break;
 
@@ -310,7 +312,6 @@ export class TelegramIntegration {
           case "reasoning":
             // Show reasoning as thinking process
             chunkText = `\n💭 ${this.escapeMarkdown(chunk.textDelta)}\n`;
-            console.log("Reasoning:", chunk.textDelta);
             shouldUpdate = true;
             break;
         }

@@ -3,7 +3,7 @@ import { Mastra } from '@mastra/core/mastra';
 import { PinoLogger } from '@mastra/loggers';
 import { mcpAgent } from './agents/mcpAgent';
 import { PostgresStore } from '@mastra/pg';
-import { TelegramIntegration } from './integrations/telegram';
+import { TelegramIntegration } from './integrations/telegramMcpAgent';
 
 // Export tools
 export { n8nActivateTool } from './tools/n8n-activate-tool';
