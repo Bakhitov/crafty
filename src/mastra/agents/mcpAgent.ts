@@ -1,12 +1,13 @@
 import { Agent } from "@mastra/core/agent";
 import { openai } from "@ai-sdk/openai";
-import { mcp } from "../mcp";
+import { RuntimeContext } from "@mastra/core/di";
+import { createMcpClient, UserRuntimeContext, mcp } from "../mcp";
 import { n8nActivateTool } from "../tools/n8n-activate-tool";
 import { n8nCredentialsTool } from "../tools/n8n-credentials-tool";
 import { Memory } from '@mastra/memory';
 
 
-// Create an agent and add tools from the MCP client
+// Создаем нативный Mastra агент с динамическими MCP инструментами
 export const mcpAgent = new Agent({
   name: "Agent with n8n MCP Tools",
   instructions: `You are an expert in n8n automation software using n8n-MCP tools. Your role is to design, build, and validate n8n workflows with maximum accuracy and efficiency.
@@ -23,10 +24,12 @@ export const mcpAgent = new Agent({
 
 3. **Credentials Preparation Phase** - ALWAYS create credentials BEFORE building workflows:
    - Identify which services/APIs your workflow will use (GitHub, Telegram, Discord, etc.)
-   - **STEP 1**: \`create-n8n-credentials({search_term: 'service_name'})\` - ALWAYS search first to discover fields
+   - **STEP 1**: \`create-n8n-credentials({search_term: 'service_name', user_chat_id: 'optional'})\` - ALWAYS search first to discover fields
    - Tool will analyze properties from database and return EXACT fields needed for that specific API
    - **STEP 2**: Review the returned field structure and ask user for required authentication data
-   - **STEP 3**: \`create-n8n-credentials({search_term: 'service_name', credential_name: 'Display Name', credential_data: {exact_field_names: 'values'}})\` - Create credentials using exact field names from Step 1
+   - **STEP 3**: \`create-n8n-credentials({search_term: 'service_name', credential_name: 'Display Name', credential_data: {exact_field_names: 'values'}, user_chat_id: 'optional', agent_name: 'optional'})\` - Create credentials using exact field names from Step 1
+   - **For Telegram users**: ALWAYS include user_chat_id parameter to use their personal API key
+   - **For direct API calls**: include agent_name: "mcpAgent" to use agent-specific API key, otherwise falls back to default API key
    - **CRITICAL**: Never assume field names - always use the discovery step to get the real field structure from database
    - **CRITICAL**: Workflows cannot function without proper credentials - always create them first!
 
@@ -63,9 +66,11 @@ export const mcpAgent = new Agent({
    - \`n8n_trigger_webhook_workflow()\` - Test webhook workflows
 
 9. **Activation Phase** - Activate workflows:
-   - \`activate-n8n-workflow({workflow_id: 'id'})\` - Activate a workflow by its ID
+   - \`activate-n8n-workflow({workflow_id: 'id', user_chat_id: 'optional', agent_name: 'optional'})\` - Activate a workflow by its ID
    - Use this tool after creating or finding a workflow that needs to be activated
    - The workflow_id can be obtained from MCP tools or previous operations
+   - For Telegram users: ALWAYS include user_chat_id parameter to use their personal API key
+   - For direct API calls: include agent_name: "mcpAgent" to use agent-specific API key, otherwise falls back to default API key
    - Activates workflows on the n8n instance at n8n.srv945365.hstgr.cloud
 
 ## Key Insights
@@ -164,13 +169,11 @@ n8n_update_partial_workflow({
 - FIX all errors before proceeding
 - ACTIVATE workflows after successful deployment to make them live`,
   model: openai("gpt-4.1-mini"),
-  tools: {
-    // Include the n8n activation tool
+  // Статически отображаемые инструменты для Playground + добавляем MCP инструменты из дефолтного клиента
+  tools: async () => ({
     'activate-n8n-workflow': n8nActivateTool,
-    // Include the n8n credentials creation tool
     'create-n8n-credentials': n8nCredentialsTool,
-    // Include all MCP tools
     ...(await mcp.getTools()),
-  },
+  }),
   memory: new Memory(),
 });

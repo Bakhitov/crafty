@@ -4,9 +4,9 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "npx n8n-mcp > /dev/null 2>&1 & mastra dev",
+    "dev": "mastra dev",
     "build": "mastra build",
-    "start": "npx n8n-mcp > /dev/null 2>&1 & mastra start"
+    "start": "mastra start"
   },
   "keywords": [],
   "author": "",
@@ -33,6 +33,7 @@
   "devDependencies": {
     "@types/node": "^24.2.0",
     "mastra": "^0.10.20",
+    "n8n-mcp": "^2.10.3",
     "typescript": "^5.9.2"
   }
 }

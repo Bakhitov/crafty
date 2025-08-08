@@ -1,5 +1,8 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
+import { RuntimeContext } from '@mastra/core/di';
+import { getN8nApiKey, UserRuntimeContext } from '../mcp';
+import { env } from '../config/environment';
 
 interface N8nActivateResponse {
   success: boolean;
@@ -10,9 +13,11 @@ interface N8nActivateResponse {
 
 export const n8nActivateTool = createTool({
   id: 'activate-n8n-workflow',
-  description: 'Activates an n8n workflow by its ID using the provided API endpoint',
+  description: 'Activates an n8n workflow by its ID. Uses user\'s personal API key if user_chat_id provided, otherwise uses default API key.',
   inputSchema: z.object({
     workflow_id: z.string().describe('The ID of the n8n workflow to activate'),
+    user_chat_id: z.string().optional().describe('Chat ID of the user for personal API key (optional, falls back to default API key)'),
+    agent_name: z.string().optional().describe('Agent name for API requests (e.g., "mcpAgent")'),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -20,28 +25,48 @@ export const n8nActivateTool = createTool({
     message: z.string(),
     workflow_id: z.string(),
   }),
-  execute: async ({ context }) => {
-    return await activateN8nWorkflow(context.workflow_id);
+  execute: async ({ context, runtimeContext }) => {
+    return await activateN8nWorkflow(context.workflow_id, context.user_chat_id, context.agent_name, runtimeContext);
   },
 });
 
-const activateN8nWorkflow = async (workflowId: string): Promise<{
+const n8nUrl = env.n8n.apiUrl.replace(/\/$/, '');
+
+const activateN8nWorkflow = async (
+  workflowId: string, 
+  userChatId?: string, 
+  agentName?: string, 
+  runtimeContext?: RuntimeContext<UserRuntimeContext>
+): Promise<{
   success: boolean;
   active?: boolean;
   message: string;
   workflow_id: string;
 }> => {
-  const apiUrl = `https://n8n.srv945365.hstgr.cloud/api/v1/workflows/${workflowId}/activate`;
-  const apiKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI3ZDEwMDNhYS0yNWM1LTQ3YTYtOTNhYy01NjNkM2Y2NWE5M2UiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzU0NDg0NDgwLCJleHAiOjE5MDMyMDEyMDB9.O_zo3cvkA3bVKjr7hynM7vpORiFH9D-4pZbWe0eWfKA';
+  // Создаем или обновляем RuntimeContext с переданными данными
+  const context = runtimeContext || new RuntimeContext<UserRuntimeContext>();
+  if (userChatId) context.set("user-chat-id", userChatId);
+  if (agentName) context.set("agent-name", agentName);
+  
+  // Получаем API ключ через нативную Mastra функцию
+  const userApiKey = getN8nApiKey(context);
+  
+  if (!userApiKey) {
+    return {
+      success: false,
+      message: userChatId 
+        ? `User ${userChatId} not found in cache or has no API key`
+        : `No API key available`,
+      workflow_id: workflowId,
+    };
+  }
+
+  const apiUrl = `${n8nUrl}/api/v1/workflows/${workflowId}/activate`;
 
   try {
     const response = await fetch(apiUrl, {
       method: 'POST',
-      headers: {
-        'accept': 'application/json',
-        'X-N8N-API-KEY': apiKey,
-        'Content-Type': 'application/json',
-      },
+      headers: buildN8nHeaders(userApiKey),
       body: '',
     });
 
@@ -55,7 +80,7 @@ const activateN8nWorkflow = async (workflowId: string): Promise<{
       result = await response.json();
     } catch (jsonError) {
       // Some APIs might return empty body on success
-      result = { success: true, message: `Workflow ${workflowId} activation request sent successfully` };
+      result = { success: true, message: `Workflow ${workflowId} activation request sent successfully` } as N8nActivateResponse;
     }
 
     return {
@@ -75,3 +100,11 @@ const activateN8nWorkflow = async (workflowId: string): Promise<{
     };
   }
 };
+
+function buildN8nHeaders(apiKey: string): HeadersInit {
+  return {
+    accept: 'application/json',
+    'X-N8N-API-KEY': apiKey,
+    'Content-Type': 'application/json',
+  };
+}

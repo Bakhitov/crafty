@@ -3,7 +3,7 @@
 // Настройка переменных окружения
 process.env.DATABASE_URL = 'postgresql://postgres:Ginifi51!@db.wyehpfzafbjfvyjzgjss.supabase.co:5432/postgres';
 process.env.N8N_API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI3ZDEwMDNhYS0yNWM1LTQ3YTYtOTNhYy01NjNkM2Y2NWE5M2UiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzU0NDg0NDgwLCJleHAiOjE5MDMyMDEyMDB9.O_zo3cvkA3bVKjr7hynM7vpORiFH9D-4pZbWe0eWfKA';
-process.env.N8N_BASE_URL = 'https://n8n.srv945365.hstgr.cloud';
+process.env.N8N_API_URL = 'https://n8n.srv945365.hstgr.cloud';
 
 const { Client } = require('pg');
 
@@ -120,7 +120,7 @@ async function testTelegramFlow() {
     
     console.log('Тело запроса для N8N:');
     console.log(JSON.stringify(requestBody, null, 2));
-    console.log(`\\nURL: ${process.env.N8N_BASE_URL}/api/v1/credentials`);
+    console.log(`\\nURL: ${process.env.N8N_API_URL}/api/v1/credentials`);
     console.log(`API Key: ${process.env.N8N_API_KEY.substring(0, 30)}...`);
     
     console.log('\\n✅ ВСЕ ЭТАПЫ ПРОШЛИ УСПЕШНО!');

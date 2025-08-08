@@ -1,5 +1,8 @@
 import TelegramBot from "node-telegram-bot-api";
+import { RuntimeContext } from "@mastra/core/di";
 import { mcpAgent } from "../agents/mcpAgent";
+import { UserRuntimeContext, mcpPool, getMcpClientForRuntime } from "../mcp";
+import { UserValidationService } from "../services/userValidationService";
 
 interface ToolUsage {
   toolName: string;
@@ -16,6 +19,7 @@ export class TelegramIntegration {
   private readonly MAX_RESULT_LENGTH = 500; // Maximum length for tool results
   private toolHistory: ToolUsage[] = []; // Store tool usage history
   private readonly MAX_HISTORY_SIZE = 50; // Keep last 50 tool usages
+  private chatThreadId = new Map<number, string>(); // keep latest threadId per chat
 
   constructor(token: string) {
     // Create a bot instance
@@ -23,6 +27,15 @@ export class TelegramIntegration {
 
     // Handle incoming messages
     this.bot.on("message", this.handleMessage.bind(this));
+  }
+
+  async cleanup(): Promise<void> {
+    try {
+      // node-telegram-bot-api stops naturally on process exit; here we focus on MCP pooling
+      await mcpPool.disconnectAll();
+    } catch (e) {
+      console.warn('⚠️ Telegram cleanup warning:', e);
+    }
   }
 
   private escapeMarkdown(text: string): string {
@@ -214,6 +227,52 @@ export class TelegramIntegration {
       return;
     }
 
+    // Handle /reset command: delete last thread and clear mapping
+    if (text === "/reset") {
+      const lastThreadId = this.chatThreadId.get(chatId);
+      try {
+        const memory = mcpAgent.getMemory();
+        if (memory && lastThreadId) {
+          // Best-effort delete of the thread if supported by memory implementation
+          const maybeDelete = (memory as unknown as { deleteThread?: (args: { resourceId: string; threadId: string }) => Promise<void> }).deleteThread;
+          if (typeof maybeDelete === 'function') {
+            await maybeDelete({
+              resourceId: chatId.toString(),
+              threadId: lastThreadId,
+            });
+          }
+        }
+      } catch (e) {
+        // Non-fatal: proceed to clear local mapping regardless
+        console.warn('Thread delete error (non-fatal):', e);
+      }
+
+      this.chatThreadId.delete(chatId);
+
+      await this.bot.sendMessage(
+        chatId,
+        "🧹 История диалога очищена.\nЕсли хотите полностью очистить чат в Telegram, удалите переписку с ботом.",
+      );
+      return;
+    }
+
+    // Validate user access
+    const validationResult = await UserValidationService.validateUser(chatId.toString());
+    
+    if (!validationResult.isValid) {
+      await this.bot.sendMessage(
+        chatId,
+        `🚫 *Доступ запрещен*\n\n${this.escapeMarkdown(validationResult.message || 'У вас нет доступа к этому боту')}\n\nОбратитесь к администратору для получения доступа\\.`,
+        {
+          parse_mode: "MarkdownV2",
+        }
+      );
+      console.log(`Access denied for chatId ${chatId}: ${validationResult.message}`);
+      return;
+    }
+
+    console.log(`User ${chatId} validated with API key: ${validationResult.apiKey?.substring(0, 10)}...`);
+
     try {
       // Send initial message
       const sentMessage = await this.bot.sendMessage(chatId, "Thinking\\.\\.\\.", {
@@ -227,18 +286,41 @@ export class TelegramIntegration {
       // Store tool call and result temporarily
       let currentToolCall: { toolName: string; args: any } | null = null;
 
-      // Generate threadId as chatId_timestamp
-      const timestamp = Date.now().toString();
-      const threadId = `${chatId}_${timestamp}`;
+      // Create a new thread for new users; reuse latest for existing users
+      let threadId = this.chatThreadId.get(chatId);
+      if (!threadId) {
+        const timestamp = Date.now().toString();
+        threadId = `tg-${chatId}_${timestamp}`;
+        this.chatThreadId.set(chatId, threadId);
+      }
       
-      // Stream response using the agent
+      // Создаем RuntimeContext с данными пользователя  
+      console.log('🔧 [TELEGRAM] Creating runtime context for user:', chatId);
+      const runtimeContext = new RuntimeContext<UserRuntimeContext>();
+      runtimeContext.set("user-chat-id", chatId.toString());
+      runtimeContext.set("agent-name", "mcpAgent");
+      runtimeContext.set("n8n-api-key", validationResult.apiKey!);
+      console.log('🔧 [TELEGRAM] Runtime context created with user data:', {
+        userChatId: chatId,
+        hasApiKey: !!validationResult.apiKey
+      });
+
+      // Получаем MCP toolsets из пула по API ключу
+      const pooledClient = getMcpClientForRuntime(runtimeContext);
+
+      // Stream response using the agent with dynamic toolsets and runtimeContext
       const stream = await mcpAgent.stream(text, {
-        threadId: threadId, // Use chatId + timestamp as thread ID
-        resourceId: "mcpAgent", // Use agent variable name as resource ID
+        // Prefer new memory API to ensure consistent threads and persistence
+        memory: {
+          thread: threadId,
+          resource: chatId.toString(),
+        },
+        runtimeContext,
+        toolsets: await pooledClient.getToolsets(),
         context: [
           {
             role: "system",
-            content: `Current user: ${firstName} (${username})`,
+            content: `Current user: ${firstName} (${username}). Authenticated user with contact_id: ${chatId}. \n\nIMPORTANT: When using n8n tools (activate-n8n-workflow, create-n8n-credentials), ALWAYS include the parameter user_chat_id: "${chatId}" to use this user's personal API key.`,
           },
         ],
       });

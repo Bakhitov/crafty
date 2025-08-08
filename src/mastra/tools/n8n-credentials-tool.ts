@@ -1,80 +1,19 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import { Client } from 'pg';
+import { RuntimeContext } from '@mastra/core/di';
+import { getN8nApiKey, UserRuntimeContext } from '../mcp';
+import { UserValidationService } from '../services/userValidationService';
+import { CredentialType, N8nCredentialResponse, FieldInfo, ParsedFields } from './n8n-credentials/types';
+import { CredentialFieldParser } from './n8n-credentials/fieldParser';
 
 // ===============================
-// 🏗️ ТИПЫ И ИНТЕРФЕЙСЫ
+// 🏗️ ТИПЫ ИМПОРТИРОВАНЫ ИЗ МОДУЛЕЙ
 // ===============================
 
-interface CredentialType {
-  name: string;
-  displayName: string;
-  properties: Record<string, any>;
-  documentationUrl?: string;
-}
-
-interface N8nCredentialResponse {
-  id: string;
-  name: string;
-  type: string;
-  createdAt: string;
-  updatedAt: string;
-  isManaged: boolean;
-}
-
-interface FieldInfo {
-  name: string;
-  displayName: string;
-  description: string;
-  type: string;
-  required: boolean;
-  isPassword: boolean;
-  options: Array<{ name: string; value: any; description?: string }>;
-  placeholder?: string;
-  default?: any;
-  validation?: {
-    pattern?: string;
-    minLength?: number;
-    maxLength?: number;
-  };
-}
-
-interface ConditionalField {
-  field: FieldInfo;
-  showWhen: {
-    fieldName: string;
-    values: any[];
-  };
-}
-
-interface ParsedFields {
-  mainFields: FieldInfo[];
-  conditionalFields: Record<string, ConditionalField[]>;
-  hiddenFields: string[];
-  totalFieldsFound: number;
-}
-
 // ===============================
-// 🔧 КОНФИГУРАЦИЯ
+// 🔧 КОНФИГУРАЦИЯ ПЕРЕНЕСЕНА В МОДУЛИ
 // ===============================
-
-// Системные поля которые нужно пропускать
-const SKIP_FIELD_TYPES = new Set([
-  'hidden',
-  'notice', 
-  'responseCode',
-  'responseSuccessBody',
-  'responseErrorBody',
-  'httpStatusCode',
-  'httpResponseBody'
-]);
-
-// Поля которые содержат пароли/секреты
-const PASSWORD_FIELD_INDICATORS = [
-  'password', 'secret', 'token', 'key', 'apikey', 'api_key',
-  'accesstoken', 'access_token', 'secretkey', 'secret_key',
-  'privatekey', 'private_key', 'credentials', 'auth'
-];
 
 // ===============================
 // 🎯 ОСНОВНОЙ ИНСТРУМЕНТ
@@ -83,14 +22,15 @@ const PASSWORD_FIELD_INDICATORS = [
 export const n8nCredentialsTool = createTool({
   id: 'create-n8n-credentials',
   description: `
-Creates credentials in n8n by searching credential types and requesting required authentication data with advanced field parsing and validation.
+Creates credentials in n8n by searching credential types and requesting required authentication data with advanced field parsing and validation. Uses user's personal API key if user_chat_id provided, otherwise uses default API key.
   `,
   inputSchema: z.object({
     search_term: z.string().describe('Search term to find credential type (e.g., "telegram", "aws", "slack")'),
     credential_name: z.string().optional().describe('Display name for the new credential'),
     credential_data: z.record(z.any()).optional().describe('Object with credential fields using exact field names as keys. Example: {"accessToken": "your_token", "baseUrl": "https://api.telegram.org"}'),
-    
     selected_api_type: z.string().optional().describe('Specific API type name when multiple found'),
+    user_chat_id: z.string().optional().describe('Chat ID of the user for personal API key (optional, falls back to default API key)'),
+    agent_name: z.string().optional().describe('Agent name for API requests (e.g., "mcpAgent")'),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -98,12 +38,15 @@ Creates credentials in n8n by searching credential types and requesting required
     message: z.string(),
     required_fields: z.array(z.string()).optional(),
   }),
-  execute: async ({ context }) => {
+  execute: async ({ context, runtimeContext }) => {
     return await createN8nCredentials(
       context.search_term,
       context.credential_name,
       context.credential_data,
-      context.selected_api_type
+      context.selected_api_type,
+      context.user_chat_id,
+      context.agent_name,
+      runtimeContext
     );
   },
 });
@@ -116,7 +59,10 @@ const createN8nCredentials = async (
   searchTerm: string,
   credentialName?: string,
   credentialData?: Record<string, any>,
-  selectedApiType?: string
+  selectedApiType?: string,
+  userChatId?: string,
+  agentName?: string,
+  runtimeContext?: RuntimeContext<UserRuntimeContext>
 ): Promise<{
   success: boolean;
   credential_id?: string;
@@ -201,7 +147,7 @@ const createN8nCredentials = async (
     }
     
     // 2. Продвинутый парсинг полей
-    const parsedFields = parseCredentialFields(selectedType.properties, false);
+    const parsedFields = CredentialFieldParser.parseCredentialFields(selectedType);
     const requiredFields = parsedFields.mainFields.filter(f => f.required);
     const allValidFields = parsedFields.mainFields.map(f => f.name);
     
@@ -341,7 +287,10 @@ const createN8nCredentials = async (
     const n8nResult = await createCredentialsInN8n(
       credentialName,
       selectedType.name,
-      enrichedCredentialData
+      enrichedCredentialData,
+      userChatId,
+      agentName,
+      runtimeContext
     );
 
     if (n8nResult.success) {
@@ -405,181 +354,8 @@ ${fieldsInfo}
 };
 
 // ===============================
-// 🔧 ПАРСИНГ ПОЛЕЙ
+// 🔧 ПАРСИНГ ПОЛЕЙ ПЕРЕНЕСЕН В МОДУЛИ
 // ===============================
-
-const parseCredentialFields = (
-  properties: any[] | Record<string, any>,
-  includeSystemFields: boolean = false
-): ParsedFields => {
-  const mainFields: FieldInfo[] = [];
-  const conditionalFields: Record<string, ConditionalField[]> = {};
-  const hiddenFields: string[] = [];
-  let totalFieldsFound = 0;
-
-  if (!properties) {
-    return {
-      mainFields: [],
-      conditionalFields: {},
-      hiddenFields: [],
-      totalFieldsFound: 0,
-    };
-  }
-
-  // Обрабатываем массив properties из БД
-  const propertiesArray = Array.isArray(properties) ? properties : Object.values(properties);
-  
-  for (const fieldConfig of propertiesArray) {
-    if (!fieldConfig || typeof fieldConfig !== 'object' || !fieldConfig.name) continue;
-    
-    totalFieldsFound++;
-
-    // 🚫 ФИЛЬТРАЦИЯ СИСТЕМНЫХ ПОЛЕЙ
-    if (!includeSystemFields && SKIP_FIELD_TYPES.has(fieldConfig.type)) {
-      hiddenFields.push(fieldConfig.name);
-      continue;
-    }
-
-    // 🏗️ БАЗОВАЯ ИНФОРМАЦИЯ О ПОЛЕ
-    const fieldInfo: FieldInfo = {
-      name: fieldConfig.name,
-      displayName: fieldConfig.displayName || fieldConfig.name,
-      description: combineFieldHints(fieldConfig),
-      type: fieldConfig.type || 'string',
-      required: determineIfRequired(fieldConfig),
-      isPassword: isPasswordField(fieldConfig.name, fieldConfig),
-      options: extractFieldOptions(fieldConfig),
-      placeholder: fieldConfig.placeholder,
-      default: fieldConfig.default,
-      validation: extractValidationRules(fieldConfig),
-    };
-
-    // 🔄 ОБРАБОТКА УСЛОВНЫХ ПОЛЕЙ
-    if (fieldConfig.displayOptions && fieldConfig.displayOptions.show) {
-      const showConditions = fieldConfig.displayOptions.show;
-      
-      for (const [conditionField, conditionValues] of Object.entries(showConditions)) {
-        if (!conditionalFields[conditionField]) {
-          conditionalFields[conditionField] = [];
-        }
-        
-        conditionalFields[conditionField].push({
-          field: fieldInfo,
-          showWhen: {
-            fieldName: conditionField,
-            values: Array.isArray(conditionValues) ? conditionValues : [conditionValues],
-          },
-        });
-      }
-    } else {
-      // Обычное поле
-      mainFields.push(fieldInfo);
-    }
-  }
-
-  // Сортировка полей: обязательные первыми
-  mainFields.sort((a, b) => {
-    if (a.required && !b.required) return -1;
-    if (!a.required && b.required) return 1;
-    return a.displayName.localeCompare(b.displayName);
-  });
-
-  return {
-    mainFields,
-    conditionalFields,
-    hiddenFields,
-    totalFieldsFound,
-  };
-};
-
-// ===============================
-// 🔧 ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ПАРСИНГА
-// ===============================
-
-const combineFieldHints = (fieldConfig: any): string => {
-  const hints: string[] = [];
-  
-  if (fieldConfig.description) {
-    hints.push(fieldConfig.description);
-  }
-  
-  if (fieldConfig.placeholder) {
-    hints.push(`Пример: ${fieldConfig.placeholder}`);
-  }
-  
-  if (fieldConfig.hint) {
-    hints.push(fieldConfig.hint);
-  }
-  
-  return hints.join(' | ');
-};
-
-const determineIfRequired = (fieldConfig: any): boolean => {
-  // Явно указано required
-  if (fieldConfig.required === true) return true;
-  if (fieldConfig.required === false) return false;
-  
-  // Если есть default значение и оно НЕ пустая строка, считаем опциональным  
-  if (fieldConfig.default !== undefined && fieldConfig.default !== null && fieldConfig.default !== '') {
-    return false;
-  }
-  
-  // Если нет default значения или default = "", считаем обязательным
-  return true;
-};
-
-const isPasswordField = (fieldName: string, fieldConfig: any): boolean => {
-  // Проверяем typeOptions.password
-  if (fieldConfig.typeOptions && fieldConfig.typeOptions.password === true) {
-    return true;
-  }
-  
-  // Проверяем имя поля на ключевые слова
-  const lowerName = fieldName.toLowerCase();
-  return PASSWORD_FIELD_INDICATORS.some(indicator => 
-    lowerName.includes(indicator)
-  );
-};
-
-const extractFieldOptions = (fieldConfig: any): Array<{ name: string; value: any; description?: string }> => {
-  if (!fieldConfig.options || !Array.isArray(fieldConfig.options)) {
-    return [];
-  }
-  
-  return fieldConfig.options.map((option: any) => {
-    if (typeof option === 'string') {
-      return { name: option, value: option };
-    }
-    
-    if (typeof option === 'object' && option !== null) {
-      return {
-        name: option.name || option.label || String(option.value),
-        value: option.value,
-        description: option.description,
-      };
-    }
-    
-    return { name: String(option), value: option };
-  });
-};
-
-const extractValidationRules = (fieldConfig: any): FieldInfo['validation'] => {
-  const validation: FieldInfo['validation'] = {};
-  
-  if (fieldConfig.pattern) {
-    validation.pattern = fieldConfig.pattern;
-  }
-  
-  if (fieldConfig.minLength !== undefined) {
-    validation.minLength = fieldConfig.minLength;
-  }
-  
-  if (fieldConfig.maxLength !== undefined) {
-    validation.maxLength = fieldConfig.maxLength;
-  }
-  
-  return Object.keys(validation).length > 0 ? validation : undefined;
-};
 
 // ===============================
 // ✅ ВАЛИДАЦИЯ
@@ -684,7 +460,7 @@ const validateCredentialData = (
 
 // Простая версия для обратной совместимости
 const extractFieldsInfo = (properties: Record<string, any>): FieldInfo[] => {
-  const parsed = parseCredentialFields(properties, false);
+      const parsed = CredentialFieldParser.parseCredentialFields({ name: '', displayName: '', properties });
   return parsed.mainFields;
 };
 
@@ -757,25 +533,39 @@ const validateDataStructure = (credentialData: Record<string, any>): StructureVa
 const createCredentialsInN8n = async (
   name: string,
   type: string,
-  data: Record<string, any>
+  data: Record<string, any>,
+  userChatId?: string,
+  agentName?: string,
+  runtimeContext?: RuntimeContext<UserRuntimeContext>
 ): Promise<{
   success: boolean;
   credential_id?: string;
   message: string;
 }> => {
-  const apiUrl = process.env.N8N_BASE_URL || 'https://n8n.srv945365.hstgr.cloud';
-  const apiKey = process.env.N8N_API_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI3ZDEwMDNhYS0yNWM1LTQ3YTYtOTNhYy01NjNkM2Y2NWE5M2UiLCJpc3MiOiJuOG4iLCJhdWQiOiJwdWJsaWMtYXBpIiwiaWF0IjoxNzU0NDg0NDgwLCJleHAiOjE5MDMyMDEyMDB9.O_zo3cvkA3bVKjr7hynM7vpORiFH9D-4pZbWe0eWfKA';
+  const apiUrl = process.env.N8N_API_URL || 'https://n8n.srv945365.hstgr.cloud';
+  
+  // Создаем или обновляем RuntimeContext с переданными данными
+  const context = runtimeContext || new RuntimeContext<UserRuntimeContext>();
+  if (userChatId) context.set("user-chat-id", userChatId);
+  if (agentName) context.set("agent-name", agentName);
+  
+  // Получаем API ключ через нативную Mastra функцию
+  const apiKey = getN8nApiKey(context);
   
   console.log('🔑 N8N API Key status:', {
+    hasUserKey: userChatId ? !!UserValidationService.getUserApiKey(userChatId) : false,
     hasEnvKey: !!process.env.N8N_API_KEY,
     keyLength: apiKey?.length || 0,
-    keyPreview: apiKey ? `${apiKey.substring(0, 20)}...` : 'undefined'
+    keyPreview: apiKey ? `${apiKey.substring(0, 20)}...` : 'undefined',
+    userChatId: userChatId || 'not provided'
   });
   
   if (!apiKey || apiKey.trim() === '') {
     return {
       success: false,
-      message: `N8N_API_KEY environment variable is required. Current value: ${process.env.N8N_API_KEY ? 'exists but empty' : 'not set'}`
+      message: userChatId 
+        ? `User ${userChatId} not found in cache or has no API key` 
+        : `N8N_API_KEY environment variable is required. Current value: ${process.env.N8N_API_KEY ? 'exists but empty' : 'not set'}`
     };
   }
 
