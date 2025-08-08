@@ -6,8 +6,11 @@ const UserDataSchema = z.object({
   contact_id: z.string(),
   api_key: z.string().nullable(),
   is_active: z.boolean().default(true),
+  // Источник вызова и тип агента
+  source: z.string().nullable().optional(),
+  type_agent: z.string().nullable().optional(),
   // LLM конфигурация
-  provider: z.string().nullable().optional(),
+  provider_llm: z.string().nullable().optional(),
   model_llm: z.string().nullable().optional(),
   api_key_llm: z.string().nullable().optional(),
 });
@@ -111,7 +114,7 @@ export class UserCacheService {
     const user = this.cache.get(contactId);
     if (!user) return null;
     return {
-      provider: (user as any).provider ?? null,
+      provider: (user as any).provider_llm ?? null,
       model: (user as any).model_llm ?? null,
       apiKey: (user as any).api_key_llm ?? null,
     };
@@ -127,7 +130,7 @@ export class UserCacheService {
       await client.query('BEGIN');
       
       const query = `
-        SELECT contact_id, api_key, is_active, provider, model_llm, api_key_llm
+        SELECT contact_id, api_key, is_active, source, type_agent, provider_llm, model_llm, api_key_llm
         FROM public.mastra_users 
         WHERE contact_id IS NOT NULL 
         AND is_active = true
@@ -144,7 +147,9 @@ export class UserCacheService {
             contact_id: row.contact_id,
             api_key: row.api_key,
             is_active: row.is_active,
-            provider: row.provider ?? null,
+            source: row.source ?? null,
+            type_agent: row.type_agent ?? null,
+            provider_llm: row.provider_llm ?? null,
             model_llm: row.model_llm ?? null,
             api_key_llm: row.api_key_llm ?? null,
           });

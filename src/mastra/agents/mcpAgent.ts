@@ -179,7 +179,7 @@ n8n_update_partial_workflow({
       const llm = UserValidationService.getUserLlmConfig(chatId);
       if (llm?.provider && llm.model) {
         // Мэппинг провайдера → инициализация SDK
-        const provider = llm.provider.toLowerCase();
+        const provider = llm.provider.toLowerCase(); // ожидаем provider_llm из БД
         if (provider === "openai") {
           const client = createOpenAI({ apiKey: llm.apiKey ?? process.env.OPENAI_API_KEY });
           return client(llm.model);
