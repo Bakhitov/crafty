@@ -122,6 +122,14 @@ export class UserValidationService {
     return this.cacheService.getUserLlmConfig(chatId);
   }
 
+  /** Проверяет активен ли пользователь */
+  static isUserActive(chatId: string): boolean {
+    if (!this.cacheService) {
+      throw new ValidationError('UserValidationService not initialized. Call init() first.');
+    }
+    return this.cacheService.isUserActive(chatId);
+  }
+
   /**
    * Получает статистику кэша для отладки
    */

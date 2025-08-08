@@ -274,6 +274,21 @@ export class TelegramIntegration {
     console.log(`User ${chatId} validated with API key: ${validationResult.apiKey?.substring(0, 10)}...`);
 
     try {
+      // Pre-flight LLM config checks and notify if missing pieces
+      const llm = UserValidationService.getUserLlmConfig(chatId.toString());
+      const isActive = UserValidationService.isUserActive(chatId.toString());
+      const warnings: string[] = [];
+      if (!isActive) warnings.push("Профиль не активен");
+      if (!llm?.provider) warnings.push("Не выбран провайдер LLM (provider_llm)");
+      if (!llm?.model) warnings.push("Не выбрана модель LLM (model_llm)");
+      if (!llm?.apiKey && !process.env.OPENAI_API_KEY) warnings.push("Нет ключа LLM (api_key_llm) и нет ENV ключа провайдера");
+      if (warnings.length > 0) {
+        await this.bot.sendMessage(
+          chatId,
+          `⚠️ Настройки LLM неполные:\n- ${warnings.join("\n- ")}\n\nПродолжу с настройками по умолчанию, но рекомендуем заполнить недостающие поля.`,
+        );
+      }
+
       // Send initial message
       const sentMessage = await this.bot.sendMessage(chatId, "Thinking\\.\\.\\.", {
         parse_mode: "MarkdownV2",
