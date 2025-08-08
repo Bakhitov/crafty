@@ -113,6 +113,16 @@ export class UserValidationService {
   }
 
   /**
+   * Получает LLM-конфигурацию пользователя из кеша
+   */
+  static getUserLlmConfig(chatId: string): { provider: string | null; model: string | null; apiKey: string | null } | null {
+    if (!this.cacheService) {
+      throw new ValidationError('UserValidationService not initialized. Call init() first.');
+    }
+    return this.cacheService.getUserLlmConfig(chatId);
+  }
+
+  /**
    * Получает статистику кэша для отладки
    */
   static getCacheStats() {

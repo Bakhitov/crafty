@@ -6,6 +6,10 @@ const UserDataSchema = z.object({
   contact_id: z.string(),
   api_key: z.string().nullable(),
   is_active: z.boolean().default(true),
+  // LLM конфигурация
+  provider: z.string().nullable().optional(),
+  model_llm: z.string().nullable().optional(),
+  api_key_llm: z.string().nullable().optional(),
 });
 
 export type CachedUserData = z.infer<typeof UserDataSchema>;
@@ -97,6 +101,23 @@ export class UserCacheService {
   }
 
   /**
+   * Получение LLM-конфигурации пользователя
+   */
+  getUserLlmConfig(contactId: string): {
+    provider: string | null;
+    model: string | null;
+    apiKey: string | null;
+  } | null {
+    const user = this.cache.get(contactId);
+    if (!user) return null;
+    return {
+      provider: (user as any).provider ?? null,
+      model: (user as any).model_llm ?? null,
+      apiKey: (user as any).api_key_llm ?? null,
+    };
+  }
+
+  /**
    * Обновление кэша из базы данных с валидацией данных
    */
   private async refreshCache(): Promise<void> {
@@ -106,7 +127,7 @@ export class UserCacheService {
       await client.query('BEGIN');
       
       const query = `
-        SELECT contact_id, api_key, is_active
+        SELECT contact_id, api_key, is_active, provider, model_llm, api_key_llm
         FROM public.mastra_users 
         WHERE contact_id IS NOT NULL 
         AND is_active = true
@@ -123,6 +144,9 @@ export class UserCacheService {
             contact_id: row.contact_id,
             api_key: row.api_key,
             is_active: row.is_active,
+            provider: row.provider ?? null,
+            model_llm: row.model_llm ?? null,
+            api_key_llm: row.api_key_llm ?? null,
           });
           validatedUsers.push(userData);
         } catch (validationError) {

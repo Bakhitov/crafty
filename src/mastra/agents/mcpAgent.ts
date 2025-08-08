@@ -1,5 +1,9 @@
 import { Agent } from "@mastra/core/agent";
 import { openai } from "@ai-sdk/openai";
+import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAI as createOpenAICompatible } from "@ai-sdk/openai"; // placeholder for other providers if needed
+import { RuntimeContext as DIContext } from "@mastra/core/di";
+import { UserValidationService } from "../services/userValidationService";
 import { RuntimeContext } from "@mastra/core/di";
 import { createMcpClient, UserRuntimeContext, mcp } from "../mcp";
 import { n8nActivateTool } from "../tools/n8n-activate-tool";
@@ -168,7 +172,25 @@ n8n_update_partial_workflow({
 - STATE validation results clearly
 - FIX all errors before proceeding
 - ACTIVATE workflows after successful deployment to make them live`,
-  model: openai("gpt-4.1-mini"),
+  model: async ({ runtimeContext }) => {
+    // Достаём user-chat-id из runtimeContext, берём конфиг из кеша
+    const chatId = (runtimeContext as DIContext<UserRuntimeContext>).get("user-chat-id");
+    if (chatId) {
+      const llm = UserValidationService.getUserLlmConfig(chatId);
+      if (llm?.provider && llm.model) {
+        // Мэппинг провайдера → инициализация SDK
+        const provider = llm.provider.toLowerCase();
+        if (provider === "openai") {
+          const client = createOpenAI({ apiKey: llm.apiKey ?? process.env.OPENAI_API_KEY });
+          return client(llm.model);
+        }
+        // расширяем при необходимости других провайдеров
+        // xai, anthropic, mistral, google, deepseek, groq, cerebras, vercel ...
+      }
+    }
+    // Fallback: project default
+    return openai("gpt-4.1-mini");
+  },
   // Статически отображаемые инструменты для Playground + добавляем MCP инструменты из дефолтного клиента
   tools: async () => ({
     'activate-n8n-workflow': n8nActivateTool,
