@@ -64,8 +64,32 @@ export const mastra = new Mastra({
 // Declare telegram bot variable but don't initialize yet
 export let telegramBot: TelegramIntegration | null = null;
 
-// Initialize the user cache and validation service FIRST
-userCache.initialize().then(() => {
+// Initialize the user cache and validation service FIRST (with retries)
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function initializeCriticalServicesWithRetry(maxAttempts: number = 5): Promise<void> {
+  let attempt = 0;
+  let lastError: unknown = null;
+  const baseDelayMs = 2000;
+  while (attempt < maxAttempts) {
+    attempt += 1;
+    try {
+      console.log(`🚀 Initializing UserCacheService (attempt ${attempt}/${maxAttempts})...`);
+      await userCache.initialize();
+      console.log('✅ UserCacheService initialized');
+      return;
+    } catch (err) {
+      lastError = err;
+      const backoff = baseDelayMs * Math.pow(2, attempt - 1);
+      console.error(`❌ UserCacheService init failed (attempt ${attempt}/${maxAttempts}). Retrying in ${backoff}ms...`, err);
+      await delay(backoff);
+    }
+  }
+  console.error('❌ UserCacheService failed to initialize after retries. Exiting.');
+  throw lastError ?? new Error('UserCacheService init failed');
+}
+
+initializeCriticalServicesWithRetry().then(() => {
   // Initialize UserValidationService with the cache instance
   UserValidationService.init(userCache);
   console.log('✅ UserValidationService initialized');
@@ -84,7 +108,7 @@ userCache.initialize().then(() => {
     cache: userCache.getCacheStats(),
   });
 }).catch((error) => {
-  console.error('❌ Failed to initialize services:', error);
+  console.error('❌ Failed to initialize services (critical):', error);
   process.exit(1);
 });
 

@@ -1,7 +1,13 @@
 import { Pool } from 'pg';
 import { env } from '../config/environment';
 
-const pool = new Pool({ connectionString: env.database.url });
+const pool = new Pool({
+  connectionString: env.database.url,
+  max: 5,
+  idleTimeoutMillis: 10000,
+  connectionTimeoutMillis: 10000,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
+});
 
 export type MastraUserRow = {
   id: string;

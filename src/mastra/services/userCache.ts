@@ -44,9 +44,14 @@ export class UserCacheService {
   constructor(connectionString: string, refreshIntervalMs: number = 3600000) {
     this.pool = new Pool({
       connectionString,
-      max: 10,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 2000,
+      // In serverless environments (like Vercel), keep the pool small
+      max: 5,
+      // Keep idle short to not hold connections unnecessarily
+      idleTimeoutMillis: 10000,
+      // Allow more time for cold connections on serverless platforms
+      connectionTimeoutMillis: 10000,
+      // Enable SSL in production (e.g. Supabase on Vercel)
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : undefined,
     });
     this.refreshInterval = refreshIntervalMs;
   }
