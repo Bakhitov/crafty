@@ -1,13 +1,13 @@
 import { Agent } from "@mastra/core/agent";
-import { openai } from "@ai-sdk/openai";
-import { createOpenAI } from "@ai-sdk/openai";
+// remove direct provider wiring, use unified factory
 import { RuntimeContext as DIContext } from "@mastra/core/di";
 import { UserValidationService } from "../services/userValidationService";
-import { RuntimeContext } from "@mastra/core/di";
-import { createMcpClient, UserRuntimeContext, mcp } from "../mcp";
+import { UserRuntimeContext, mcp } from "../mcp";
 import { n8nActivateTool } from "../tools/n8n-activate-tool";
 import { n8nCredentialsTool } from "../tools/n8n-credentials-tool";
 import { Memory } from '@mastra/memory';
+import { resolveLlmModel } from "../utils/llmProviderFactory";
+// (no custom wrappers for MCP tools; rely on native toolsets)
 
 
 // Создаем нативный Mastra агент с динамическими MCP инструментами
@@ -170,31 +170,81 @@ n8n_update_partial_workflow({
 - USE diff operations for updates (80-90% token savings)
 - STATE validation results clearly
 - FIX all errors before proceeding
-- ACTIVATE workflows after successful deployment to make them live`,
+- ACTIVATE workflows after successful deployment to make them live
+- When calling tools, never pass null values. For optional params, omit the field entirely. For boolean filters (e.g., active), use true/false or omit.
+`,
   model: async ({ runtimeContext }) => {
     // Достаём user-chat-id из runtimeContext, берём конфиг из кеша
     const chatId = (runtimeContext as DIContext<UserRuntimeContext>).get("user-chat-id");
     if (chatId) {
       const llm = UserValidationService.getUserLlmConfig(chatId);
       if (llm?.provider && llm.model && llm.apiKey) {
-        // Мэппинг провайдера → инициализация SDK
-        const provider = llm.provider.toLowerCase(); // ожидаем provider_llm из БД
-        if (provider === "openai") {
-          const client = createOpenAI({ apiKey: llm.apiKey });
-          return client(llm.model);
-        }
-        // расширяем при необходимости других провайдеров
-        // xai, anthropic, mistral, google, deepseek, groq, cerebras, vercel ...
+        // Унифицированное разрешение провайдера
+        return resolveLlmModel({ provider: llm.provider, model: llm.model, apiKey: llm.apiKey }) as any;
       }
     }
-    // Без корректного конфига из кеша запрещаем запрос, чтобы не утекать на ENV
-    throw new Error("LLM configuration missing (provider_llm/model_llm/api_key_llm). Contact administrator.");
+    // В Playground (список агентов) runtimeContext отсутствует. Вместо ошибки возвращаем безопасный дефолт из ENV,
+    // чтобы эндпоинт /api/agents не падал 500 и агенты отображались.
+    // Можно переопределить через ENV: DEFAULT_LLM_PROVIDER/DEFAULT_LLM_MODEL
+    const fallbackProvider = (process.env.DEFAULT_LLM_PROVIDER || "openai").toLowerCase();
+    const fallbackModel = process.env.DEFAULT_LLM_MODEL || "gpt-4o-mini";
+    return resolveLlmModel({ provider: fallbackProvider, model: fallbackModel, apiKey: null }) as any;
   },
-  // Статически отображаемые инструменты для Playground + добавляем MCP инструменты из дефолтного клиента
-  tools: async () => ({
-    'activate-n8n-workflow': n8nActivateTool,
-    'create-n8n-credentials': n8nCredentialsTool,
-    ...(await mcp.getTools()),
-  }),
+  // Статически отображаем только нативные инструменты Mastra.
+  // MCP-инструменты подключаются динамически через toolsets при вызове stream()/generate().
+  tools: async ({ runtimeContext }) => {
+    const baseTools = {
+      'activate-n8n-workflow': n8nActivateTool,
+      'create-n8n-credentials': n8nCredentialsTool,
+    } as Record<string, any>;
+
+    // Для Playground (без user-chat-id) можно безопасно отобразить MCP-инструменты из ENV
+    try {
+      const chatId = (runtimeContext as DIContext<UserRuntimeContext>).get('user-chat-id');
+      const hasUserContext = Boolean(chatId);
+      const hasEnvN8nKey = Boolean(process.env.N8N_API_KEY);
+      if (!hasUserContext && hasEnvN8nKey) {
+        const mcpTools = await mcp.getTools();
+        return { ...baseTools, ...mcpTools };
+      }
+    } catch (_) {
+      // Тихо игнорируем ошибки MCP, чтобы не ломать листинг агентов
+    }
+    return baseTools;
+  },
   memory: new Memory(),
 });
+
+/**
+ * Recursively remove null values from objects/arrays to avoid sending invalid
+ * arguments like { active: null } to MCP tools (which often require boolean).
+ */
+function stripNulls<T>(value: T): T {
+  // kept for possible future local tools; MCP tools now pass schemas natively
+  if (value === null) return undefined as unknown as T;
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => stripNulls(item))
+      .filter((item) => item !== undefined) as unknown as T;
+  }
+  if (typeof value === 'object' && value !== undefined) {
+    const result: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
+      const cleaned = stripNulls(val as unknown);
+      if (cleaned !== undefined) {
+        result[key] = cleaned;
+      }
+    }
+    return result as unknown as T;
+  }
+  return value;
+}
+
+/**
+ * Wrap MCP tools with a permissive input schema and a sanitizer that strips nulls
+ * before delegating to the original tool implementation.
+ */
+function wrapMcpTools(tools: Record<string, any>): Record<string, any> {
+  // Deprecated: We now rely on native MCPClient toolsets without wrapping.
+  return tools;
+}

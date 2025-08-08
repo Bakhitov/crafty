@@ -6,7 +6,6 @@ import { PostgresStore } from '@mastra/pg';
 import { TelegramIntegration } from './integrations/telegramMcpAgent';
 import { UserCacheService } from './services/userCache';
 import { UserValidationService } from './services/userValidationService';
-import { weatherWorkflow } from './workflows/weather-workflow';
 import { env } from './config/environment';
 import { mcpPool } from './mcp';
 import { RuntimeContext } from '@mastra/core/di';
@@ -15,7 +14,7 @@ import type { UserRuntimeContext } from './mcp';
 // Export tools
 export { n8nActivateTool } from './tools/n8n-activate-tool';
 export { n8nCredentialsTool } from './tools/n8n-credentials-tool';
-export { weatherTool } from './tools/weather-tool';
+// export { weatherTool } from './tools/weather-tool';
 
 // Export MCP utilities
 export { createMcpClient, getN8nApiKey, type UserRuntimeContext } from './mcp';
@@ -33,7 +32,7 @@ export const userCache = new UserCacheService(
 export const mastra = new Mastra({
   storage,
   agents: { mcpAgent },
-  workflows: { weatherWorkflow },
+  workflows: {},
   logger: new PinoLogger({
     name: 'Mastra',
     level: env.logging.level,

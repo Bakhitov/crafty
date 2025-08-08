@@ -139,4 +139,12 @@ export class UserValidationService {
     }
     return this.cacheService.getCacheStats();
   }
+
+  /** Принудительное обновление кеша пользователей */
+  static async forceRefreshCache(): Promise<void> {
+    if (!this.cacheService) {
+      throw new ValidationError('UserValidationService not initialized. Call init() first.');
+    }
+    await this.cacheService.forceRefresh();
+  }
 }
