@@ -281,12 +281,13 @@ export class TelegramIntegration {
       if (!isActive) warnings.push("Профиль не активен");
       if (!llm?.provider) warnings.push("Не выбран провайдер LLM (provider_llm)");
       if (!llm?.model) warnings.push("Не выбрана модель LLM (model_llm)");
-      if (!llm?.apiKey && !process.env.OPENAI_API_KEY) warnings.push("Нет ключа LLM (api_key_llm) и нет ENV ключа провайдера");
+      if (!llm?.apiKey) warnings.push("Нет ключа LLM (api_key_llm)");
       if (warnings.length > 0) {
         await this.bot.sendMessage(
           chatId,
-          `⚠️ Настройки LLM неполные:\n- ${warnings.join("\n- ")}\n\nПродолжу с настройками по умолчанию, но рекомендуем заполнить недостающие поля.`,
+          `⚠️ Настройки LLM неполные:\n- ${warnings.join("\n- ")}\n\nЗапросы к LLM запрещены. Заполните недостающие поля.`,
         );
+        return; // жесткая остановка: без кеша не идем к LLM
       }
 
       // Send initial message
