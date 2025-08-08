@@ -30,11 +30,6 @@ export class TelegramIntegration {
       models: ['grok-3', 'grok-3-fast', 'grok-3-mini', 'grok-3-mini-fast', 'grok-2-1212', 'grok-2-vision-1212', 'grok-beta', 'grok-vision-beta'],
     },
     {
-      name: 'Vercel',
-      key: 'vercel',
-      models: ['v0-1.0-md'],
-    },
-    {
       name: 'OpenAI',
       key: 'openai',
       models: ['gpt-4.1', 'gpt-4.1-mini', 'gpt-4.1-nano', 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'o3-mini', 'o3', 'o4-mini', 'o1', 'o1-mini', 'o1-preview'],

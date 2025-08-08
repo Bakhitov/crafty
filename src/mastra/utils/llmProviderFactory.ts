@@ -21,8 +21,7 @@ export type SupportedProvider =
   | "mistral"
   | "deepseek"
   | "cerebras"
-  | "xai"
-  | "vercel"; // OpenAI-compatible via Vercel API
+  | "xai";
 
 export interface LlmConfigInput {
   provider: string | null;
@@ -66,11 +65,6 @@ export function resolveLlmModel(config: LlmConfigInput): any {
       return cerebras(model) as any;
     case "xai":
       return xai(model) as any;
-    case "vercel": {
-      // Use OpenAI-compatible base URL for Vercel AI (v0 models)
-      const client = createOpenAI({ apiKey: key, baseURL: process.env.VERCEL_BASE_URL || "https://api.vercel.ai" });
-      return client(model) as any;
-    }
     default:
       throw new Error(`Unsupported LLM provider: ${provider}`);
   }
@@ -99,8 +93,6 @@ function getApiKeyForProvider(provider: SupportedProvider, userKey?: string): st
       return process.env.CEREBRAS_API_KEY;
     case "xai":
       return process.env.XAI_API_KEY;
-    case "vercel":
-      return process.env.VERCEL_API_KEY;
     default:
       return undefined;
   }

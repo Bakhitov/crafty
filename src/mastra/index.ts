@@ -1,6 +1,5 @@
 
 import { Mastra } from '@mastra/core/mastra';
-import { VercelDeployer } from '@mastra/deployer-vercel';
 import { PinoLogger } from '@mastra/loggers';
 import { mcpAgent } from './agents/mcpAgent';
 import { PostgresStore } from '@mastra/pg';
@@ -38,8 +37,6 @@ export const mastra = new Mastra({
     name: 'Mastra',
     level: env.logging.level,
   }),
-  // Configure deployment to Vercel so the build outputs .vercel/output
-  deployer: new VercelDeployer(),
   // Enable HTTP server with middleware to support invocation from any source
   server: {
     cors: { origin: '*', allowMethods: ['GET', 'POST', 'OPTIONS'] },
