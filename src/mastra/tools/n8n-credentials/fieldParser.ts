@@ -28,32 +28,66 @@ export class CredentialFieldParser {
       return { mainFields, conditionalFields, hiddenFields, totalFieldsFound };
     }
 
-    // Логика парсинга полей...
-    for (const [fieldName, fieldConfig] of Object.entries(credentialType.properties)) {
-      totalFieldsFound++;
-      
-      if (this.shouldSkipField(fieldConfig)) {
-        hiddenFields.push(fieldName);
-        continue;
-      }
+    // Свойства из БД могут приходить как массив объектов или как объект-словарь.
+    const props: any = credentialType.properties as any;
 
-      const fieldInfo = this.createFieldInfo(fieldName, fieldConfig);
-      
-      if (this.isConditionalField(fieldConfig)) {
-        const condition = this.extractCondition(fieldConfig);
-        if (condition) {
-          if (!conditionalFields[condition.fieldName]) {
-            conditionalFields[condition.fieldName] = [];
-          }
-          conditionalFields[condition.fieldName].push({
-            field: fieldInfo,
-            showWhen: condition
-          });
+    // Вариант 1: массив полей [{ name, ... }, ...]
+    if (Array.isArray(props)) {
+      for (const fieldConfig of props) {
+        totalFieldsFound++;
+
+        if (this.shouldSkipField(fieldConfig)) {
+          hiddenFields.push(fieldConfig?.name ?? String(totalFieldsFound - 1));
           continue;
         }
-      }
 
-      mainFields.push(fieldInfo);
+        const fieldInfo = this.createFieldInfo(fieldConfig?.name, fieldConfig);
+
+        if (this.isConditionalField(fieldConfig)) {
+          const condition = this.extractCondition(fieldConfig);
+          if (condition) {
+            if (!conditionalFields[condition.fieldName]) {
+              conditionalFields[condition.fieldName] = [];
+            }
+            conditionalFields[condition.fieldName].push({
+              field: fieldInfo,
+              showWhen: condition,
+            });
+            continue;
+          }
+        }
+
+        mainFields.push(fieldInfo);
+      }
+    } else {
+      // Вариант 2: объект-словарь { accessToken: { ... }, baseUrl: { ... } }
+      for (const [fieldKey, fieldConfig] of Object.entries(props)) {
+        totalFieldsFound++;
+
+        if (this.shouldSkipField(fieldConfig)) {
+          hiddenFields.push(fieldKey);
+          continue;
+        }
+
+        // Если в конфиге есть явное имя, используем его; иначе — ключ словаря
+        const fieldInfo = this.createFieldInfo((fieldConfig as any)?.name ?? fieldKey, fieldConfig);
+
+        if (this.isConditionalField(fieldConfig)) {
+          const condition = this.extractCondition(fieldConfig);
+          if (condition) {
+            if (!conditionalFields[condition.fieldName]) {
+              conditionalFields[condition.fieldName] = [];
+            }
+            conditionalFields[condition.fieldName].push({
+              field: fieldInfo,
+              showWhen: condition,
+            });
+            continue;
+          }
+        }
+
+        mainFields.push(fieldInfo);
+      }
     }
 
     return { mainFields, conditionalFields, hiddenFields, totalFieldsFound };
@@ -63,9 +97,10 @@ export class CredentialFieldParser {
     return this.SKIP_FIELD_TYPES.has(fieldConfig.type);
   }
 
-  private static createFieldInfo(fieldName: string, fieldConfig: any): FieldInfo {
+  private static createFieldInfo(fieldName: string | undefined, fieldConfig: any): FieldInfo {
     return {
-      name: fieldName,
+      // Имя поля приоритетно берём из конфигурации; иначе — из переданного ключа
+      name: (fieldConfig?.name ?? fieldName) as string,
       displayName: fieldConfig.displayName || fieldName,
       description: fieldConfig.description || '',
       type: fieldConfig.type || 'string',
@@ -78,8 +113,9 @@ export class CredentialFieldParser {
     };
   }
 
-  private static isPasswordField(fieldName: string, fieldConfig: any): boolean {
-    const lowerName = fieldName.toLowerCase();
+  private static isPasswordField(fieldName: string | undefined, fieldConfig: any): boolean {
+    const effectiveName = (fieldConfig?.name ?? fieldName ?? '').toString();
+    const lowerName = effectiveName.toLowerCase();
     return this.PASSWORD_FIELD_INDICATORS.some(indicator => 
       lowerName.includes(indicator)
     ) || fieldConfig.typeOptions?.password;

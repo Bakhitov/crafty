@@ -55,6 +55,58 @@ Creates credentials in n8n by searching credential types and requesting required
 // 🧠 ГЛАВНАЯ ЛОГИКА
 // ===============================
 
+// Нормализуем поле properties из БД (часто хранится как двойной JSON-строки)
+function normalizeProperties(raw: unknown): any {
+  if (!raw) return undefined;
+
+  // Если уже объект/массив
+  if (Array.isArray(raw) || (typeof raw === 'object' && raw !== null)) return raw;
+
+  // Пробуем распарсить строку 1-2 раза (на случай двойной сериализации)
+  if (typeof raw === 'string') {
+    let text = raw.trim();
+
+    for (let i = 0; i < 2; i++) {
+      try {
+        const parsed = JSON.parse(text);
+        if (typeof parsed === 'string') {
+          text = parsed;
+          continue;
+        }
+        return parsed;
+      } catch {
+        // попытаемся снять экранирование и распарсить ещё раз
+        try {
+          const unescaped = text
+            .replace(/\\n/g, '\n')
+            .replace(/\\r/g, '\r')
+            .replace(/\\t/g, '\t')
+            .replace(/\\"/g, '"');
+          const parsed = JSON.parse(unescaped);
+          if (typeof parsed === 'string') {
+            text = parsed;
+            continue;
+          }
+          return parsed;
+        } catch {
+          // игнорируем, попробуем следующую итерацию/фолбэк ниже
+        }
+      }
+    }
+
+    // Как фолбэк: если выглядит как JSON-массив/объект — пробуем ещё раз напрямую
+    if ((text.startsWith('[') && text.endsWith(']')) || (text.startsWith('{') && text.endsWith('}'))) {
+      try {
+        return JSON.parse(text);
+      } catch {
+        // вернуть как есть нельзя — вернём undefined
+      }
+    }
+  }
+
+  return undefined;
+}
+
 const createN8nCredentials = async (
   searchTerm: string,
   credentialName?: string,
@@ -119,7 +171,7 @@ const createN8nCredentials = async (
     const foundTypes: CredentialType[] = searchResult.rows.map(row => ({
       name: row.name,
       displayName: row.displayName,
-      properties: row.properties
+      properties: normalizeProperties(row.properties),
     }));
 
     // Если множественные результаты и не указан конкретный тип
