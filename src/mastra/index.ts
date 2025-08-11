@@ -46,7 +46,7 @@ export const mastra = new Mastra({
   }),
   telemetry: {
     serviceName: 'crafty',
-    enabled: true,
+    enabled: env.telemetry.enabled,
     export: { type: 'otlp' },
   },
   // Enable HTTP server with middleware to support invocation from any source

@@ -1,12 +1,16 @@
 // @ts-nocheck
 // Keep this file JS-compatible and ESM-safe; avoid TS-only syntax
 
-// Signal to Mastra that telemetry is intentionally enabled via custom instrumentation
+// Signal to Mastra only when telemetry is enabled by env
 try {
-  // Mark telemetry as intentionally enabled to silence Mastra warning
-  // Note: keep this file pure JS-compatible (no TS-only syntax)
   // @ts-ignore
-  globalThis.___MASTRA_TELEMETRY___ = true;
+  const enabled = String(process.env.TELEMETRY_ENABLED || '').toLowerCase();
+  // truthy values: '1', 'true', 'yes', 'on'
+  const isOn = enabled === '1' || enabled === 'true' || enabled === 'yes' || enabled === 'on';
+  if (isOn) {
+    // @ts-ignore
+    globalThis.___MASTRA_TELEMETRY___ = true;
+  }
 } catch {}
 
 // This function will be picked up by Mastra CLI and bundled to .mastra/output/instrumentation.mjs
@@ -14,6 +18,12 @@ try {
 // - OTEL_EXPORTER_OTLP_ENDPOINT
 // - OTEL_EXPORTER_OTLP_HEADERS
 export async function register() {
+  // Read flag early; if disabled, do nothing
+  try {
+    const enabled = String(process.env.TELEMETRY_ENABLED || '').toLowerCase();
+    const isOn = enabled === '1' || enabled === 'true' || enabled === 'yes' || enabled === 'on';
+    if (!isOn) return;
+  } catch {}
   try {
     const sdkNode = await import('@opentelemetry/sdk-node');
     const auto = await import('@opentelemetry/auto-instrumentations-node');

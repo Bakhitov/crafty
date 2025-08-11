@@ -18,6 +18,9 @@ const environmentSchema = z.object({
   // Logging
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
   
+  // Telemetry
+  TELEMETRY_ENABLED: z.coerce.boolean().default(false),
+  
   // Public URL for Telegram WebApp (Mini App)
   APP_PUBLIC_URL: z.string().url().optional(),
   
@@ -68,6 +71,12 @@ class EnvironmentConfig {
   get logging() {
     return {
       level: this.config.LOG_LEVEL,
+    };
+  }
+
+  get telemetry() {
+    return {
+      enabled: this.config.TELEMETRY_ENABLED,
     };
   }
 
