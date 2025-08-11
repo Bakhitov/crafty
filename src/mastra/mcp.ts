@@ -12,6 +12,8 @@ export type UserRuntimeContext = {
   "user-chat-id"?: string;
   "agent-name"?: string;
   "n8n-api-key"?: string; // Пользовательский API ключ передается через RuntimeContext
+  "n8n-url"?: string; // Пользовательский n8n URL
+  "channel"?: "telegram" | "whatsapp" | "web" | string;
 };
 
 /**
@@ -46,10 +48,10 @@ export function getN8nApiKey(runtimeContext?: RuntimeContext<UserRuntimeContext>
   const agentName = runtimeContext?.get("agent-name");
   console.log('🔍 [MCP] Agent Name:', agentName || 'not provided');
   
-  if (!apiKey && agentName === 'mcpAgent') {
-    // Для mcpAgent используем переменную окружения как fallback
+  if (!apiKey && agentName === 'n8nAgent') {
+    // Для n8nAgent используем переменную окружения как fallback
     apiKey = process.env.N8N_API_KEY || null;
-    console.log('🔍 [MCP] Using env API key for mcpAgent:', apiKey ? 'Found' : 'Not found');
+    console.log('🔍 [MCP] Using env API key for n8nAgent:', apiKey ? 'Found' : 'Not found');
   }
   
   // Fallback к переменной окружения если нет других опций
@@ -85,10 +87,22 @@ export function createMcpClient(runtimeContext?: RuntimeContext<UserRuntimeConte
   console.log('🚀 [MCP] Client ID:', clientId || 'auto-generated');
   
   const apiKey = getN8nApiKey(runtimeContext);
+  // Resolve n8n URL: prefer user-specific from cache/context, then env
+  let resolvedN8nUrl: string | null = null;
+  const userChatId = runtimeContext?.get("user-chat-id");
+  const contextUrl = runtimeContext?.get("n8n-url");
+  if (contextUrl) {
+    resolvedN8nUrl = contextUrl;
+  } else if (userChatId) {
+    resolvedN8nUrl = UserValidationService.getUserN8nUrl(userChatId);
+  }
+  if (!resolvedN8nUrl) {
+    resolvedN8nUrl = process.env.N8N_API_URL || "https://n8n.srv945365.hstgr.cloud";
+  }
   
   console.log('🚀 [MCP] Creating MCP Client with config:', {
     clientId: clientId || `mcp-client-${Date.now()}`,
-    n8nUrl: "https://n8n.srv945365.hstgr.cloud",
+    n8nUrl: resolvedN8nUrl,
     hasApiKey: !!apiKey,
     apiKeyPreview: apiKey ? `${apiKey.substring(0, 10)}...` : 'undefined'
   });
@@ -111,7 +125,7 @@ export function createMcpClient(runtimeContext?: RuntimeContext<UserRuntimeConte
           MCP_MODE: "stdio",
           LOG_LEVEL: process.env.MCP_LOG_LEVEL || "info",
           DISABLE_CONSOLE_OUTPUT: process.env.MCP_DISABLE_CONSOLE_OUTPUT === 'true' ? 'true' : 'false',
-          N8N_API_URL: process.env.N8N_API_URL || "https://n8n.srv945365.hstgr.cloud",
+          N8N_API_URL: resolvedN8nUrl,
           N8N_API_KEY: apiKey
         }
       }
@@ -130,7 +144,7 @@ export const mcp = createMcpClient();
  * when many users have distinct n8n API keys. Reuses clients per key and evicts LRU.
  */
 class McpClientPool {
-  private readonly apiKeyToClient = new Map<string, MCPClient>();
+  private readonly keyToClient = new Map<string, MCPClient>();
   private readonly lruKeys: string[] = [];
   private readonly maxSize: number;
 
@@ -138,39 +152,40 @@ class McpClientPool {
     this.maxSize = Math.max(1, maxSize);
   }
 
-  private touch(apiKey: string): void {
-    const idx = this.lruKeys.indexOf(apiKey);
+  private touch(cacheKey: string): void {
+    const idx = this.lruKeys.indexOf(cacheKey);
     if (idx !== -1) this.lruKeys.splice(idx, 1);
-    this.lruKeys.push(apiKey);
+    this.lruKeys.push(cacheKey);
   }
 
   private async evictIfNeeded(): Promise<void> {
     while (this.lruKeys.length > this.maxSize) {
       const oldestKey = this.lruKeys.shift();
       if (!oldestKey) break;
-      const client = this.apiKeyToClient.get(oldestKey);
+      const client = this.keyToClient.get(oldestKey);
       if (client) {
         try {
           await client.disconnect();
         } catch (e) {
           console.warn('⚠️ [MCP] Error disconnecting evicted client:', e);
         }
-        this.apiKeyToClient.delete(oldestKey);
+        this.keyToClient.delete(oldestKey);
       }
     }
   }
 
-  getClientForApiKey(apiKey: string): MCPClient {
+  getClientForConfig(n8nUrl: string, apiKey: string): MCPClient {
     if (!apiKey) {
       throw new NotFoundError('N8N_API_KEY');
     }
-    const existing = this.apiKeyToClient.get(apiKey);
+    const cacheKey = `${n8nUrl}|${apiKey}`;
+    const existing = this.keyToClient.get(cacheKey);
     if (existing) {
-      this.touch(apiKey);
+      this.touch(cacheKey);
       return existing;
     }
     // Create a new client configured with this apiKey
-    const clientId = `n8n-${apiKey.slice(0, 8)}-${Date.now()}`;
+    const clientId = `n8n-${Buffer.from(n8nUrl).toString('base64').slice(0,8)}-${apiKey.slice(0, 8)}-${Date.now()}`;
     const client = new MCPClient({
       id: clientId,
       servers: {
@@ -181,14 +196,14 @@ class McpClientPool {
             MCP_MODE: 'stdio',
             LOG_LEVEL: process.env.MCP_LOG_LEVEL || 'error',
             DISABLE_CONSOLE_OUTPUT: process.env.MCP_DISABLE_CONSOLE_OUTPUT === 'true' ? 'true' : 'false',
-            N8N_API_URL: process.env.N8N_API_URL || 'https://n8n.srv945365.hstgr.cloud',
+            N8N_API_URL: n8nUrl,
             N8N_API_KEY: apiKey,
           },
         },
       },
     });
-    this.apiKeyToClient.set(apiKey, client);
-    this.touch(apiKey);
+    this.keyToClient.set(cacheKey, client);
+    this.touch(cacheKey);
     // Fire-and-forget eviction to keep size under cap
     void this.evictIfNeeded();
     return client;
@@ -196,7 +211,7 @@ class McpClientPool {
 
   async disconnectAll(): Promise<void> {
     const disconnects: Promise<void>[] = [];
-    for (const [key, client] of this.apiKeyToClient.entries()) {
+    for (const [key, client] of this.keyToClient.entries()) {
       disconnects.push(
         client
           .disconnect()
@@ -204,7 +219,7 @@ class McpClientPool {
       );
     }
     await Promise.all(disconnects);
-    this.apiKeyToClient.clear();
+    this.keyToClient.clear();
     this.lruKeys.length = 0;
   }
 }
@@ -217,5 +232,8 @@ export const mcpPool = new McpClientPool();
  */
 export function getMcpClientForRuntime(runtimeContext?: RuntimeContext<UserRuntimeContext>): MCPClient {
   const apiKey = getN8nApiKey(runtimeContext);
-  return mcpPool.getClientForApiKey(apiKey);
+  // Resolve url similarly to createMcpClient
+  const userChatId = runtimeContext?.get('user-chat-id');
+  let n8nUrl = runtimeContext?.get('n8n-url') || (userChatId ? UserValidationService.getUserN8nUrl(userChatId) : null) || process.env.N8N_API_URL || 'https://n8n.srv945365.hstgr.cloud';
+  return mcpPool.getClientForConfig(n8nUrl, apiKey);
 }

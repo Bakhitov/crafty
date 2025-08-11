@@ -13,10 +13,13 @@ const environmentSchema = z.object({
   TELEGRAM_BOT_TOKEN: z.string().optional(),
   
   // Cache
-  CACHE_REFRESH_INTERVAL_MS: z.coerce.number().default(3600000), // 1 hour
+  CACHE_REFRESH_INTERVAL_MS: z.coerce.number().default(180000), // 3 minutes
   
   // Logging
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
+  
+  // Public URL for Telegram WebApp (Mini App)
+  APP_PUBLIC_URL: z.string().url().optional(),
   
   // Node Environment
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
@@ -65,6 +68,12 @@ class EnvironmentConfig {
   get logging() {
     return {
       level: this.config.LOG_LEVEL,
+    };
+  }
+
+  get app() {
+    return {
+      publicUrl: this.config.APP_PUBLIC_URL,
     };
   }
 

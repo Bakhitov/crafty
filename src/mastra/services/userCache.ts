@@ -4,7 +4,8 @@ import { z } from 'zod';
 // Упрощенная схема - только нужные для кеша поля
 const UserDataSchema = z.object({
   contact_id: z.string(),
-  api_key: z.string().nullable(),
+  n8n_api_key: z.string().nullable(),
+  n8n_url: z.string().nullable().optional(),
   is_active: z.boolean().default(true),
   // Источник вызова и тип агента
   source: z.string().nullable().optional(),
@@ -41,7 +42,7 @@ export class UserCacheService {
     cacheMisses: 0,
   };
 
-  constructor(connectionString: string, refreshIntervalMs: number = 3600000) {
+  constructor(connectionString: string, refreshIntervalMs: number = 180000) {
     this.pool = new Pool({
       connectionString,
       // In serverless environments (like Vercel), keep the pool small
@@ -105,7 +106,13 @@ export class UserCacheService {
    */
   getUserApiKey(contactId: string): string | null {
     const user = this.cache.get(contactId);
-    return user?.api_key || null;
+    return (user as any)?.n8n_api_key || null;
+  }
+
+  /** Получение пользовательского n8n URL */
+  getUserN8nUrl(contactId: string): string | null {
+    const user = this.cache.get(contactId);
+    return (user as any)?.n8n_url || null;
   }
 
   /**
@@ -135,7 +142,7 @@ export class UserCacheService {
       await client.query('BEGIN');
       
       const query = `
-        SELECT contact_id, api_key, is_active, source, type_agent, provider_llm, model_llm, api_key_llm
+        SELECT contact_id, n8n_api_key, n8n_url, is_active, source, type_agent, provider_llm, model_llm, api_key_llm
         FROM public.mastra_users 
         WHERE contact_id IS NOT NULL 
         AND is_active = true
@@ -150,7 +157,8 @@ export class UserCacheService {
         try {
           const userData = UserDataSchema.parse({
             contact_id: row.contact_id,
-            api_key: row.api_key,
+            n8n_api_key: row.n8n_api_key ?? null,
+            n8n_url: row.n8n_url ?? null,
             is_active: row.is_active,
             source: row.source ?? null,
             type_agent: row.type_agent ?? null,
@@ -236,7 +244,7 @@ export class UserCacheService {
   private updateStats(): void {
     const users = Array.from(this.cache.values());
     this.stats.totalActiveUsers = users.length;
-    this.stats.usersWithApiKey = users.filter(u => u.api_key).length;
+    this.stats.usersWithApiKey = users.filter(u => (u as any).n8n_api_key).length;
     this.stats.lastRefresh = new Date();
   }
 

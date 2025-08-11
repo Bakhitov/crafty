@@ -4,6 +4,7 @@ import { ValidationError, NotFoundError } from '../utils/errors';
 export interface UserValidationResult {
   isValid: boolean;
   apiKey?: string;
+  n8nUrl?: string;
   message?: string;
 }
 
@@ -36,10 +37,12 @@ export class UserValidationService {
       
       if (user) {
         // Пользователь найден в кэше
-        if (user.api_key) {
+        const apiKey = (user as any).n8n_api_key;
+        if (apiKey) {
           return {
             isValid: true,
-            apiKey: user.api_key,
+            apiKey,
+            n8nUrl: (user as any).n8n_url ?? null,
             message: `Пользователь ${chatId} успешно авторизован`
           };
         } else {
@@ -59,10 +62,12 @@ export class UserValidationService {
       
       if (user) {
         // Пользователь найден после обновления
-        if (user.api_key) {
+        const apiKey = (user as any).n8n_api_key;
+        if (apiKey) {
           return {
             isValid: true,
-            apiKey: user.api_key,
+            apiKey,
+            n8nUrl: (user as any).n8n_url ?? null,
             message: `Пользователь ${chatId} найден после обновления кэша`
           };
         } else {
@@ -110,6 +115,14 @@ export class UserValidationService {
       throw new ValidationError('UserValidationService not initialized. Call init() first.');
     }
     return this.cacheService.getUserApiKey(chatId);
+  }
+
+  /** Получает n8n URL пользователя из кэша */
+  static getUserN8nUrl(chatId: string): string | null {
+    if (!this.cacheService) {
+      throw new ValidationError('UserValidationService not initialized. Call init() first.');
+    }
+    return this.cacheService.getUserN8nUrl(chatId);
   }
 
   /**

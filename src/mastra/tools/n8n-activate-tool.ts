@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { RuntimeContext } from '@mastra/core/di';
 import { getN8nApiKey, UserRuntimeContext } from '../mcp';
 import { env } from '../config/environment';
+import { UserValidationService } from '../services/userValidationService';
 
 interface N8nActivateResponse {
   success: boolean;
@@ -17,7 +18,7 @@ export const n8nActivateTool = createTool({
   inputSchema: z.object({
     workflow_id: z.string().describe('The ID of the n8n workflow to activate'),
     user_chat_id: z.string().optional().describe('Chat ID of the user for personal API key (optional, falls back to default API key)'),
-    agent_name: z.string().optional().describe('Agent name for API requests (e.g., "mcpAgent")'),
+    agent_name: z.string().optional().describe('Agent name for API requests (e.g., "n8nAgent")'),
   }),
   outputSchema: z.object({
     success: z.boolean(),
@@ -30,7 +31,7 @@ export const n8nActivateTool = createTool({
   },
 });
 
-const n8nUrl = env.n8n.apiUrl.replace(/\/$/, '');
+// base URL will be resolved per-user inside the function
 
 const activateN8nWorkflow = async (
   workflowId: string, 
@@ -61,7 +62,14 @@ const activateN8nWorkflow = async (
     };
   }
 
-  const apiUrl = `${n8nUrl}/api/v1/workflows/${workflowId}/activate`;
+  // Resolve n8n URL: prefer user's custom from cache, else env
+  let baseUrl = env.n8n.apiUrl.replace(/\/$/, '');
+  if (userChatId) {
+    const customUrl = UserValidationService.getUserN8nUrl(userChatId);
+    if (customUrl) baseUrl = customUrl.replace(/\/$/, '');
+  }
+
+  const apiUrl = `${baseUrl}/api/v1/workflows/${workflowId}/activate`;
 
   try {
     const response = await fetch(apiUrl, {

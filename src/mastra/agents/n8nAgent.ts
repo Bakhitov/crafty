@@ -2,16 +2,17 @@ import { Agent } from "@mastra/core/agent";
 // remove direct provider wiring, use unified factory
 import { RuntimeContext as DIContext } from "@mastra/core/di";
 import { UserValidationService } from "../services/userValidationService";
-import { UserRuntimeContext, mcp } from "../mcp";
+import { UserRuntimeContext, mcp, getMcpClientForRuntime } from "../mcp";
 import { n8nActivateTool } from "../tools/n8n-activate-tool";
-import { n8nCredentialsTool } from "../tools/n8n-credentials-tool";
+import { n8nVariablesTool } from "../tools/n8n-variables-tool";
+import { n8nCredentialsCrudTool } from "../tools/n8n-credentials-crud-tool";
 import { Memory } from '@mastra/memory';
 import { resolveLlmModel } from "../utils/llmProviderFactory";
 // (no custom wrappers for MCP tools; rely on native toolsets)
 
 
 // Создаем нативный Mastra агент с динамическими MCP инструментами
-export const mcpAgent = new Agent({
+export const n8nAgent = new Agent({
   name: "Agent with n8n MCP Tools",
   instructions: `You are an expert in n8n automation software using n8n-MCP tools. Your role is to design, build, and validate n8n workflows with maximum accuracy and efficiency.
 
@@ -27,14 +28,13 @@ export const mcpAgent = new Agent({
 
 3. **Credentials Preparation Phase** - ALWAYS create credentials BEFORE building workflows:
    - Identify which services/APIs your workflow will use (GitHub, Telegram, Discord, etc.)
-   - **STEP 1**: \`create-n8n-credentials({search_term: 'service_name', user_chat_id: 'optional'})\` - ALWAYS search first to discover fields
-   - Tool will analyze properties from database and return EXACT fields needed for that specific API
-   - **STEP 2**: Review the returned field structure and ask user for required authentication data
-   - **STEP 3**: \`create-n8n-credentials({search_term: 'service_name', credential_name: 'Display Name', credential_data: {exact_field_names: 'values'}, user_chat_id: 'optional', agent_name: 'optional'})\` - Create credentials using exact field names from Step 1
-   - **For Telegram users**: ALWAYS include user_chat_id parameter to use their personal API key
-   - **For direct API calls**: include agent_name: "mcpAgent" to use agent-specific API key, otherwise falls back to default API key
-   - **CRITICAL**: Never assume field names - always use the discovery step to get the real field structure from database
-   - **CRITICAL**: Workflows cannot function without proper credentials - always create them first!
+   - **STEP 1 (discover types/fields)**: \`n8n-credentials-crud({ action: 'list', search_term: 'service_name' })\` — list credential TYPES via Supabase and inspect properties
+   - **STEP 2**: Ask the user for required authentication data based on discovered fields
+   - **STEP 3 (create)**: \`n8n-credentials-crud({ action: 'create', name: 'Display Name', type: 'type_from_list', data: {exact_field_names: 'values'}, user_chat_id: 'optional', agent_name: 'optional' })\`
+   - **For Telegram users**: ALWAYS include user_chat_id to use their personal API key
+   - **For direct API calls**: include agent_name: "n8nAgent" to use agent-specific API key, otherwise falls back to default API key
+   - **CRITICAL**: Never assume field names — discover exact fields first
+   - **CRITICAL**: Workflows cannot function without proper credentials — create them first!
 
 4. **Configuration Phase** - Get node details efficiently:
    - \`get_node_essentials(nodeType)\` - Start here! Only 10-20 essential properties
@@ -73,7 +73,7 @@ export const mcpAgent = new Agent({
    - Use this tool after creating or finding a workflow that needs to be activated
    - The workflow_id can be obtained from MCP tools or previous operations
    - For Telegram users: ALWAYS include user_chat_id parameter to use their personal API key
-   - For direct API calls: include agent_name: "mcpAgent" to use agent-specific API key, otherwise falls back to default API key
+   - For direct API calls: include agent_name: "n8nAgent" to use agent-specific API key, otherwise falls back to default API key
    - Activates workflows on the n8n instance at n8n.srv945365.hstgr.cloud
 
 ## Key Insights
@@ -127,11 +127,9 @@ search_nodes({query: 'target_service'})
 get_node_essentials('found-node-type')
 
 ### 2. Create Credentials FIRST - DYNAMIC DISCOVERY
-create-n8n-credentials({search_term: 'target_service'})
-// Tool will analyze database properties and return EXACT field structure needed
-// Example response: "Found API with required fields: accessToken (required), baseUrl (optional with default)"
-// Ask user for the specific fields returned by the tool
-create-n8n-credentials({search_term: 'target_service', credential_name: 'My Service', credential_data: {field_name_from_discovery: 'user_provided_value'}})
+n8n-credentials-crud({ action: 'list', search_term: 'target_service' })
+// Review fields/requirements and ask user for exact values
+n8n-credentials-crud({ action: 'create', name: 'My Service', type: 'resolved_type', data: {field_name_from_discovery: 'user_value'} })
 
 ### 3. Pre-Validation
 validate_node_minimal('found-node-type', {resource:'target_resource', operation:'target_operation'})
@@ -195,21 +193,10 @@ n8n_update_partial_workflow({
   tools: async ({ runtimeContext }) => {
     const baseTools = {
       'activate-n8n-workflow': n8nActivateTool,
-      'create-n8n-credentials': n8nCredentialsTool,
+      'n8n-variables': n8nVariablesTool,
+      'n8n-credentials-crud': n8nCredentialsCrudTool,
     } as Record<string, any>;
-
-    // Для Playground (без user-chat-id) можно безопасно отобразить MCP-инструменты из ENV
-    try {
-      const chatId = (runtimeContext as DIContext<UserRuntimeContext>).get('user-chat-id');
-      const hasUserContext = Boolean(chatId);
-      const hasEnvN8nKey = Boolean(process.env.N8N_API_KEY);
-      if (!hasUserContext && hasEnvN8nKey) {
-        const mcpTools = await mcp.getTools();
-        return { ...baseTools, ...mcpTools };
-      }
-    } catch (_) {
-      // Тихо игнорируем ошибки MCP, чтобы не ломать листинг агентов
-    }
+    // Чисто динамика: MCP инструменты подмешиваются через toolsets при stream()/generate()
     return baseTools;
   },
   memory: new Memory(),
