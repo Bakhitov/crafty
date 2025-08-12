@@ -4,7 +4,7 @@ import { UserValidationService } from "./services/userValidationService";
 import { NotFoundError } from "./utils/errors";
 import fs from 'node:fs';
 import path from 'node:path';
-import { env } from './config/environment';
+// import { env } from './config/environment';
 
 // Убираем hardcoded API ключ - теперь используем только переменные окружения
 
@@ -86,24 +86,6 @@ export function getN8nApiKey(runtimeContext?: RuntimeContext<UserRuntimeContext>
 export function createMcpClient(runtimeContext?: RuntimeContext<UserRuntimeContext>, clientId?: string): MCPClient {
   console.log('🚀 [MCP] Creating MCP Client - Start');
   console.log('🚀 [MCP] Client ID:', clientId || 'auto-generated');
-  
-  // Dev-mode: использовать mcp-remote если заданы URL и TOKEN
-  const devRemoteEnabled = env.isDevelopment && !!env.mcp.remoteUrl && !!env.mcp.token;
-  if (devRemoteEnabled) {
-    console.log('🛠️ [MCP] Development mode: using mcp-remote');
-    const mcpClient = new MCPClient({
-      id: clientId || `mcp-client-${Date.now()}`,
-      timeout: Number(process.env.MCP_CLIENT_TIMEOUT || 90000),
-      servers: {
-        'n8n-railway': {
-          command: 'npx',
-          args: ['-y', 'mcp-remote', env.mcp.remoteUrl as string, '--header', `Authorization: Bearer ${env.mcp.token}`],
-        },
-      },
-    });
-    console.log('✅ [MCP] MCP Client (remote) created successfully');
-    return mcpClient;
-  }
 
   // Prod/stdio режим
   const apiKey = getN8nApiKey(runtimeContext);
@@ -133,17 +115,25 @@ export function createMcpClient(runtimeContext?: RuntimeContext<UserRuntimeConte
   const command = useLocal ? localBin : 'npx';
   const args = useLocal ? [] : ['n8n-mcp'];
 
+  // Глобальный переключатель логирования: в development включаем подробные логи по умолчанию
+  const isDevEnv = process.env.NODE_ENV === 'development';
+  const effectiveLogLevel = process.env.MCP_LOG_LEVEL || (isDevEnv ? 'debug' : 'info');
+  const effectiveDisableConsole =
+    typeof process.env.MCP_DISABLE_CONSOLE_OUTPUT === 'string'
+      ? (process.env.MCP_DISABLE_CONSOLE_OUTPUT.toLowerCase() === 'true' ? 'true' : 'false')
+      : (isDevEnv ? 'false' : 'false');
+
   const mcpClient = new MCPClient({
     id: clientId || `mcp-client-${Date.now()}`,
     timeout: Number(process.env.MCP_CLIENT_TIMEOUT || 90000),
     servers: {
       "n8n-mcp": {
         command,
-        args,
+        args: ["n8n-mcp"],
         env: {
           MCP_MODE: "stdio",
-          LOG_LEVEL: process.env.MCP_LOG_LEVEL || "info",
-          DISABLE_CONSOLE_OUTPUT: process.env.MCP_DISABLE_CONSOLE_OUTPUT === 'true' ? 'true' : 'false',
+          LOG_LEVEL: effectiveLogLevel,
+          DISABLE_CONSOLE_OUTPUT: effectiveDisableConsole,
           N8N_API_URL: resolvedN8nUrl,
           N8N_API_KEY: apiKey
         }
@@ -205,6 +195,14 @@ class McpClientPool {
     }
     // Create a new client configured with this apiKey
     const clientId = `n8n-${Buffer.from(n8nUrl).toString('base64').slice(0,8)}-${apiKey.slice(0, 8)}-${Date.now()}`;
+    // Глобальный переключатель логирования: в development включаем подробные логи по умолчанию
+    const isDevEnv = process.env.NODE_ENV === 'development';
+    const effectiveLogLevel = process.env.MCP_LOG_LEVEL || (isDevEnv ? 'debug' : 'error');
+    const effectiveDisableConsole =
+      typeof process.env.MCP_DISABLE_CONSOLE_OUTPUT === 'string'
+        ? (process.env.MCP_DISABLE_CONSOLE_OUTPUT.toLowerCase() === 'true' ? 'true' : 'false')
+        : (isDevEnv ? 'false' : 'false');
+
     const client = new MCPClient({
       id: clientId,
       servers: {
@@ -213,8 +211,8 @@ class McpClientPool {
           args: ['n8n-mcp'],
           env: {
             MCP_MODE: 'stdio',
-            LOG_LEVEL: process.env.MCP_LOG_LEVEL || 'error',
-            DISABLE_CONSOLE_OUTPUT: process.env.MCP_DISABLE_CONSOLE_OUTPUT === 'true' ? 'true' : 'false',
+            LOG_LEVEL: effectiveLogLevel,
+            DISABLE_CONSOLE_OUTPUT: effectiveDisableConsole,
             N8N_API_URL: n8nUrl,
             N8N_API_KEY: apiKey,
           },
@@ -224,29 +222,6 @@ class McpClientPool {
     this.keyToClient.set(cacheKey, client);
     this.touch(cacheKey);
     // Fire-and-forget eviction to keep size under cap
-    void this.evictIfNeeded();
-    return client;
-  }
-
-  getClientForRemote(remoteUrl: string, token: string): MCPClient {
-    const cacheKey = `remote|${remoteUrl}|${token}`;
-    const existing = this.keyToClient.get(cacheKey);
-    if (existing) {
-      this.touch(cacheKey);
-      return existing;
-    }
-    const clientId = `remote-${Buffer.from(remoteUrl).toString('base64').slice(0, 8)}-${Date.now()}`;
-    const client = new MCPClient({
-      id: clientId,
-      servers: {
-        'n8n-railway': {
-          command: 'npx',
-          args: ['-y', 'mcp-remote', remoteUrl, '--header', `Authorization: Bearer ${token}`],
-        },
-      },
-    });
-    this.keyToClient.set(cacheKey, client);
-    this.touch(cacheKey);
     void this.evictIfNeeded();
     return client;
   }
@@ -273,10 +248,6 @@ export const mcpPool = new McpClientPool();
  * Uses user-specific API key when available, falls back to env.
  */
 export function getMcpClientForRuntime(runtimeContext?: RuntimeContext<UserRuntimeContext>): MCPClient {
-  const devRemoteEnabled = env.isDevelopment && !!env.mcp.remoteUrl && !!env.mcp.token;
-  if (devRemoteEnabled) {
-    return mcpPool.getClientForRemote(env.mcp.remoteUrl as string, env.mcp.token as string);
-  }
   const apiKey = getN8nApiKey(runtimeContext);
   // Resolve url similarly to createMcpClient
   const userChatId = runtimeContext?.get('user-chat-id');

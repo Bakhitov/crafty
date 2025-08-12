@@ -34,7 +34,6 @@
     "@mastra/pg": "^0.13.3",
     "@types/node-telegram-bot-api": "^0.64.10",
     "@types/pg": "^8.15.5",
-    "n8n-mcp": "^2.10.3",
     "node-telegram-bot-api": "^0.66.0",
     "pg": "^8.16.3",
     "zod": "^3.25.76"
@@ -42,6 +41,7 @@
   "devDependencies": {
     "@types/node": "^24.2.0",
     "mastra": "^0.10.20",
+    "n8n-mcp": "^2.10.4",
     "typescript": "^5.9.2"
   }
 }
