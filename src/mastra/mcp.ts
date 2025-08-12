@@ -4,6 +4,7 @@ import { UserValidationService } from "./services/userValidationService";
 import { NotFoundError } from "./utils/errors";
 import fs from 'node:fs';
 import path from 'node:path';
+import { env } from './config/environment';
 
 // Убираем hardcoded API ключ - теперь используем только переменные окружения
 
@@ -86,6 +87,25 @@ export function createMcpClient(runtimeContext?: RuntimeContext<UserRuntimeConte
   console.log('🚀 [MCP] Creating MCP Client - Start');
   console.log('🚀 [MCP] Client ID:', clientId || 'auto-generated');
   
+  // Dev-mode: использовать mcp-remote если заданы URL и TOKEN
+  const devRemoteEnabled = env.isDevelopment && !!env.mcp.remoteUrl && !!env.mcp.token;
+  if (devRemoteEnabled) {
+    console.log('🛠️ [MCP] Development mode: using mcp-remote');
+    const mcpClient = new MCPClient({
+      id: clientId || `mcp-client-${Date.now()}`,
+      timeout: Number(process.env.MCP_CLIENT_TIMEOUT || 90000),
+      servers: {
+        'n8n-railway': {
+          command: 'npx',
+          args: ['-y', 'mcp-remote', env.mcp.remoteUrl as string, '--header', `Authorization: Bearer ${env.mcp.token}`],
+        },
+      },
+    });
+    console.log('✅ [MCP] MCP Client (remote) created successfully');
+    return mcpClient;
+  }
+
+  // Prod/stdio режим
   const apiKey = getN8nApiKey(runtimeContext);
   // Resolve n8n URL: prefer user-specific from cache/context, then env
   let resolvedN8nUrl: string | null = null;
@@ -99,21 +119,20 @@ export function createMcpClient(runtimeContext?: RuntimeContext<UserRuntimeConte
   if (!resolvedN8nUrl) {
     resolvedN8nUrl = process.env.N8N_API_URL || "https://n8n.srv945365.hstgr.cloud";
   }
-  
+
   console.log('🚀 [MCP] Creating MCP Client with config:', {
     clientId: clientId || `mcp-client-${Date.now()}`,
     n8nUrl: resolvedN8nUrl,
     hasApiKey: !!apiKey,
     apiKeyPreview: apiKey ? `${apiKey.substring(0, 10)}...` : 'undefined'
   });
-  
+
   // Определяем команду запуска: локальный бинарь, иначе fallback к npx
   const localBin = path.resolve(process.cwd(), 'node_modules/.bin/n8n-mcp');
   const useLocal = fs.existsSync(localBin);
   const command = useLocal ? localBin : 'npx';
   const args = useLocal ? [] : ['n8n-mcp'];
 
-  // Создаем MCP клиент с правильным API ключом и уникальным ID
   const mcpClient = new MCPClient({
     id: clientId || `mcp-client-${Date.now()}`,
     timeout: Number(process.env.MCP_CLIENT_TIMEOUT || 90000),
@@ -209,6 +228,29 @@ class McpClientPool {
     return client;
   }
 
+  getClientForRemote(remoteUrl: string, token: string): MCPClient {
+    const cacheKey = `remote|${remoteUrl}|${token}`;
+    const existing = this.keyToClient.get(cacheKey);
+    if (existing) {
+      this.touch(cacheKey);
+      return existing;
+    }
+    const clientId = `remote-${Buffer.from(remoteUrl).toString('base64').slice(0, 8)}-${Date.now()}`;
+    const client = new MCPClient({
+      id: clientId,
+      servers: {
+        'n8n-railway': {
+          command: 'npx',
+          args: ['-y', 'mcp-remote', remoteUrl, '--header', `Authorization: Bearer ${token}`],
+        },
+      },
+    });
+    this.keyToClient.set(cacheKey, client);
+    this.touch(cacheKey);
+    void this.evictIfNeeded();
+    return client;
+  }
+
   async disconnectAll(): Promise<void> {
     const disconnects: Promise<void>[] = [];
     for (const [key, client] of this.keyToClient.entries()) {
@@ -231,9 +273,13 @@ export const mcpPool = new McpClientPool();
  * Uses user-specific API key when available, falls back to env.
  */
 export function getMcpClientForRuntime(runtimeContext?: RuntimeContext<UserRuntimeContext>): MCPClient {
+  const devRemoteEnabled = env.isDevelopment && !!env.mcp.remoteUrl && !!env.mcp.token;
+  if (devRemoteEnabled) {
+    return mcpPool.getClientForRemote(env.mcp.remoteUrl as string, env.mcp.token as string);
+  }
   const apiKey = getN8nApiKey(runtimeContext);
   // Resolve url similarly to createMcpClient
   const userChatId = runtimeContext?.get('user-chat-id');
-  let n8nUrl = runtimeContext?.get('n8n-url') || (userChatId ? UserValidationService.getUserN8nUrl(userChatId) : null) || process.env.N8N_API_URL || 'https://n8n.srv945365.hstgr.cloud';
+  const n8nUrl = runtimeContext?.get('n8n-url') || (userChatId ? UserValidationService.getUserN8nUrl(userChatId) : null) || process.env.N8N_API_URL || 'https://n8n.srv945365.hstgr.cloud';
   return mcpPool.getClientForConfig(n8nUrl, apiKey);
 }

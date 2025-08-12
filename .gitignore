@@ -6,3 +6,4 @@ dist
 .env
 *.db
 *.db-*
+n8n-mcp

@@ -1175,7 +1175,9 @@ export class TelegramIntegration {
         ? await network.stream(text, {
             memory: { thread: threadId, resource: this.agentName },
             runtimeContext,
-            maxSteps: 20,
+            maxSteps: 30,
+            // Передаём весь набор MCP toolsets в сетку агентов, чтобы все видели те же инструменты
+            toolsets: await pooledClient.getToolsets(),
           })
         : await ((this.resolveAgent ? this.resolveAgent(this.agentName) : null) || n8nAgent).stream(text, {
             memory: { thread: threadId, resource: this.agentName },

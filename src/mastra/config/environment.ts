@@ -8,6 +8,9 @@ const environmentSchema = z.object({
   // N8N Configuration
   N8N_API_URL: z.string().url().default('https://n8n.srv945365.hstgr.cloud'),
   N8N_API_KEY: z.string().optional(),
+  // MCP Remote (dev-only)
+  N8N_MCP_URL: z.string().url().optional(),
+  N8N_MCP_TOKEN: z.string().optional(),
   
   // Telegram
   TELEGRAM_BOT_TOKEN: z.string().optional(),
@@ -59,6 +62,13 @@ class EnvironmentConfig {
     return {
       apiUrl: this.config.N8N_API_URL,
       apiKey: this.config.N8N_API_KEY,
+    };
+  }
+
+  get mcp() {
+    return {
+      remoteUrl: this.config.N8N_MCP_URL,
+      token: this.config.N8N_MCP_TOKEN,
     };
   }
 

@@ -14,7 +14,7 @@ import { resolveLlmModel } from "../utils/llmProviderFactory";
 // Создаем нативный Mastra агент с динамическими MCP инструментами
 export const n8nAgent = new Agent({
   name: "Agent with n8n MCP Tools",
-  instructions: `You are an expert in n8n automation software using n8n-MCP tools. Your role is to design, build, and validate n8n workflows with maximum accuracy and efficiency.
+  instructions: `You are an expert in n8n automation software using n8n-MCP tools. Your role is to design, build, and validate n8n workflows with maximum accuracy and efficiency. You need to use working memory to store important information.
 
 ## Core Workflow Process
 
@@ -158,6 +158,17 @@ n8n_update_partial_workflow({
   ]
 })
 
+## Memory Rules
+The most important information should be stored in the working memory according to the template:
+ # Working memory
+- **Workflow name**: 
+- **Workflow ID**:
+- **Workflow nodes and their configurations**:
+- **Workflow JSON structure draft**:
+- **Status completed**:
+- **Credentials**: 
+- **Variables**:
+
 ## Important Rules
 
 - ALWAYS validate before building
@@ -185,7 +196,7 @@ n8n_update_partial_workflow({
     // чтобы эндпоинт /api/agents не падал 500 и агенты отображались.
     // Можно переопределить через ENV: DEFAULT_LLM_PROVIDER/DEFAULT_LLM_MODEL
     const fallbackProvider = (process.env.DEFAULT_LLM_PROVIDER || "openai").toLowerCase();
-    const fallbackModel = process.env.DEFAULT_LLM_MODEL || "gpt-4o-mini";
+    const fallbackModel = process.env.DEFAULT_LLM_MODEL || "gpt-4.1";
     return resolveLlmModel({ provider: fallbackProvider, model: fallbackModel, apiKey: null }) as any;
   },
   // Статически отображаем только нативные инструменты Mastra.
@@ -196,10 +207,45 @@ n8n_update_partial_workflow({
       'n8n-variables': n8nVariablesTool,
       'n8n-credentials-crud': n8nCredentialsCrudTool,
     } as Record<string, any>;
-    // Чисто динамика: MCP инструменты подмешиваются через toolsets при stream()/generate()
-    return baseTools;
+    // Динамически подтягиваем все MCP‑инструменты и объединяем с базовыми
+    try {
+      const client = getMcpClientForRuntime(runtimeContext as unknown as DIContext<UserRuntimeContext>);
+      const mcpTools = await client.getTools();
+      return { ...mcpTools, ...baseTools } as Record<string, any>;
+    } catch {
+      return baseTools;
+    }
   },
-  memory: new Memory(),
+  memory: new Memory({
+    options: {
+      workingMemory: {
+        enabled: true,
+        template: `# Working memory
+- **Workflow name**: 
+- **Workflow ID**:
+- **Workflow nodes and their configurations**:
+- **Workflow JSON structure draft**: {
+  "name": example_name,
+  "nodes": 
+  ...}
+- **Status completed**:
+- **Credentials**: 
+- **Variables**: 
+`,
+      },
+      threads: {
+        generateTitle: true,
+      },
+      // Disable semantic recall unless a vector store/embedder is configured
+      semanticRecall: false,
+    },
+  }),
+  defaultGenerateOptions: {
+    maxSteps: 30,
+  },
+  defaultStreamOptions: {
+    maxSteps: 30,
+  },
 });
 
 /**
