@@ -14,7 +14,7 @@ import { resolveLlmModel } from "../utils/llmProviderFactory";
 // Создаем нативный Mastra агент с динамическими MCP инструментами
 export const n8nAgent = new Agent({
   name: "Agent with n8n MCP Tools",
-  instructions: `You are an expert in n8n automation software using n8n-MCP tools. Your role is to design, build, and validate n8n workflows with maximum accuracy and efficiency. You need to use working memory to store important information.
+  instructions: `You are an expert in n8n automation software using n8n-MCP tools. Your role is to design, build, and validate n8n workflows with maximum accuracy and efficiency. You need to use working memory to store important information ALWAYS.
 
 ## Core Workflow Process
 
