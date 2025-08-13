@@ -67,6 +67,19 @@ When delegating to an agent, provide:
 **Project Documentation**: [Link to the project folder in workflows/ and/or any relevant files]
 ```
 
+### Structured Handoff Bundle (Required)
+Always provide a compact machine-usable object to the `ask_*` tool in `context.handoff`:
+```
+handoff = {
+  "project": "name-or-id",
+  "phase": "architect|builder|qa|deployer",
+  "completed": ["..."],
+  "nextSteps": ["..."],
+  "artifact": { "templateId": "...", "workflowJsonPath": "...", "credentialsPlan": [ ... ] }
+}
+```
+Include this as `context` when calling `ask_architect|ask_builder|ask_qa|ask_deployer`.
+
 ### Progress Tracking
 Maintain a project status that includes:
 ```
@@ -88,9 +101,12 @@ Maintain a project status that includes:
    - Start with `get_template(id)` if available
    - Build incrementally
   - If nodes require credentials and they are missing → call Mastra tool `n8n-credentials-crud` with action `create` and attach created credential to nodes
+   - Produce QA handoff bundle with workflow path and notes
 3. **QA** → Validate nodes, connections, expressions; run scenarios
+   - On Ready, produce Deployer handoff bundle (activationSuggested, monitoringPlan)
 4. **Deployer** → Deploy after QA green
-   - Attempt activation via Mastra tool `activate-n8n-workflow` (use `user_chat_id` if available), else instruct manual activation in n8n UI
+   - First run `n8n_health_check()`; if unhealthy, report and pause.
+   - Attempt activation via Mastra tool `activate-n8n-workflow` (use `user_chat_id` if available). If the endpoint is unavailable, clearly instruct manual activation in the n8n UI.
    - For webhook-based workflows: after activation, test with `n8n_trigger_webhook_workflow` and monitor initial executions
 
 ### Pattern 2: Workflow Fix/Improve (Validation-First)
@@ -122,6 +138,19 @@ Only for truly complex multi-workflow systems:
 1. Confirm specs and constraints
 2. Jump directly to Builder → QA → Deployer
 3. Pull Architect only if design gaps emerge
+
+### Project Modes and Validation Profiles
+- mode: "fast" → validation profile: runtime (balanced speed/accuracy)
+- mode: "standard" → validation profile: runtime + extra checks where relevant
+- mode: "hardened" → validation profile: strict (максимальная строгость перед продом)
+
+Always include the selected validation profile hint in agent handoffs; agents should adapt their validate_* calls accordingly.
+
+### User Level Adaptation
+- userLevel: "pro" → ask minimal questions, focus on facts and exact fields/IDs; keep answers concise.
+- userLevel: "beginner" → add short explanations, show examples and next steps; avoid jargon.
+
+Include { mode, userLevel } in the structured handoff to guide downstream agents.
 
 ## Decision Framework
 

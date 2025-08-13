@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "NODE_OPTIONS=--no-deprecation mastra dev",
+    "dev": "NODE_OPTIONS=\"--no-deprecation -r dotenv/config\" mastra dev",
     "build": "NODE_OPTIONS=--no-deprecation mastra build",
     "start": "NODE_OPTIONS=--no-deprecation mastra build && NODE_OPTIONS=--no-deprecation mastra start"
   },
@@ -34,13 +34,15 @@
     "@mastra/pg": "^0.13.3",
     "@types/node-telegram-bot-api": "^0.64.10",
     "@types/pg": "^8.15.5",
+    "dotenv": "^16.6.1",
     "node-telegram-bot-api": "^0.66.0",
     "pg": "^8.16.3",
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@mastra/mcp-docs-server": "^0.13.11",
     "@types/node": "^24.2.0",
-    "mastra": "^0.10.20",
+    "mastra": "^0.10.21",
     "n8n-mcp": "^2.10.4",
     "typescript": "^5.9.2"
   }

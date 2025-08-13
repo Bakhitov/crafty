@@ -18,13 +18,18 @@ export const n8nAgent = new Agent({
 
 ## Core Workflow Process
 
-1. **ALWAYS start new conversation with**: \`tools_documentation()\` to understand best practices and available tools.
+ 1. **ALWAYS start new conversation with**: \`tools_documentation({ depth: "essentials" })\` to understand best practices and available tools.
+    - If you plan to use Code node, first read the guide via:
+      - JavaScript: \`tools_documentation({ topic: "javascript_code_node_guide", depth: "essentials" })\`
+      - Python: \`tools_documentation({ topic: "python_code_node_guide", depth: "essentials" })\`
 
 2. **Discovery Phase** - Find the right nodes:
    - Think deeply about user request and the logic you are going to build to fulfill it. Ask follow-up questions to clarify the user's intent, if something is unclear. Then, proceed with the rest of your instructions.
    - \`search_nodes({query: 'keyword'})\` - Search by functionality
    - \`list_nodes({category: 'trigger'})\` - Browse by category
    - \`list_ai_tools()\` - See AI-capable nodes (remember: ANY node can be an AI tool!)
+    - \`get_database_statistics()\` - Quick sanity of MCP DB (counts, coverage)
+    - \`get_node_as_tool_info(nodeType)\` - How to use ANY node as AI tool
 
 3. **Credentials Preparation Phase** - ALWAYS create credentials BEFORE building workflows:
    - Identify which services/APIs your workflow will use (GitHub, Telegram, Discord, etc.)
@@ -37,10 +42,19 @@ export const n8nAgent = new Agent({
    - **CRITICAL**: Workflows cannot function without proper credentials — create them first!
 
 4. **Configuration Phase** - Get node details efficiently:
-   - \`get_node_essentials(nodeType)\` - Start here! Only 10-20 essential properties
-   - \`search_node_properties(nodeType, 'auth')\` - Find specific properties
-   - \`get_node_for_task('send_email')\` - Get pre-configured templates
-   - \`get_node_documentation(nodeType)\` - Human-readable docs when needed
+    - \`get_node_essentials(nodeType)\` - Start here! Only 10-20 essential properties
+    - \`get_node_info(nodeType)\` - Full node schema when necessary
+    - \`search_node_properties(nodeType, 'auth')\` - Find specific properties
+    - \`get_property_dependencies(nodeType, config)\` - Understand field visibility/dependsOn rules
+    - \`get_node_for_task('send_email')\` - Get pre-configured templates
+    - \`get_node_documentation(nodeType)\` - Human-readable docs when needed
+
+  - Templates & Examples:
+    - \`list_tasks({ category })\` - Common tasks per category
+    - \`search_templates({ query })\` - Search workflow templates
+    - \`list_node_templates({ nodeTypes: [...] })\` - Templates using specific node types
+    - \`get_template({ templateId })\` - Full workflow JSON by ID
+    - \`get_templates_for_task({ task })\` - Curated templates by task
    - It is good common practice to show a visual representation of the workflow architecture to the user and asking for opinion, before moving forward. 
 
 5. **Pre-Validation Phase** - Validate BEFORE building:
@@ -63,10 +77,18 @@ export const n8nAgent = new Agent({
    - Fix any issues found before deployment
 
 8. **Deployment Phase** (if n8n API configured):
-   - \`n8n_create_workflow(workflow)\` - Deploy validated workflow
+    - \`n8n_health_check()\` - Verify API connectivity and instance health
+    - \`n8n_create_workflow(workflow)\` - Deploy validated workflow
    - \`n8n_validate_workflow({id: 'workflow-id'})\` - Post-deployment validation
    - \`n8n_update_partial_workflow()\` - Make incremental updates using diffs
    - \`n8n_trigger_webhook_workflow()\` - Test webhook workflows
+    - Optional management utilities:
+      - \`n8n_get_workflow({ id })\`, \`n8n_get_workflow_details({ id })\`
+      - \`n8n_get_workflow_structure({ id })\`, \`n8n_get_workflow_minimal({ id })\`
+      - \`n8n_list_workflows({ ...filters })\`, \`n8n_delete_workflow({ id })\`
+      - \`n8n_update_full_workflow({ id, nodes, connections })\`
+      - \`n8n_list_executions({ ...filters })\`, \`n8n_get_execution({ id })\`, \`n8n_delete_execution({ id })\`
+      - \`n8n_list_available_tools()\`, \`n8n_diagnostic({ verbose })\`
 
 9. **Activation Phase** - Activate workflows:
    - \`activate-n8n-workflow({workflow_id: 'id', user_chat_id: 'optional', agent_name: 'optional'})\` - Activate a workflow by its ID

@@ -21,6 +21,7 @@ export class TelegramIntegration {
   private bot: TelegramBot;
   private readonly agentName: string;
   private readonly resolveAgent?: (name: string) => Agent | undefined;
+  private readonly resourcePrefix: string;
   private readonly MAX_MESSAGE_LENGTH = 4096; // Telegram's message length limit
   private readonly MAX_RESULT_LENGTH = 500; // Maximum length for tool results
   private toolHistory: ToolUsage[] = []; // Store tool usage history
@@ -77,9 +78,10 @@ export class TelegramIntegration {
     },
   ];
 
-  constructor(token: string, options?: { agentName?: string; resolveAgent?: (name: string) => Agent | undefined }) {
+  constructor(token: string, options?: { agentName?: string; resolveAgent?: (name: string) => Agent | undefined; resourcePrefix?: string }) {
     this.agentName = options?.agentName || "orchestratorAgent";
     this.resolveAgent = options?.resolveAgent;
+    this.resourcePrefix = options?.resourcePrefix || 'telegramN8NTeam';
     // Create a bot instance with explicit allowed updates
     this.bot = new TelegramBot(token, {
       polling: {
@@ -101,6 +103,10 @@ export class TelegramIntegration {
     this.bot.on('webhook_error', (err) => console.error('[TG] webhook_error:', err));
     // @ts-ignore
     this.bot.on('error', (err) => console.error('[TG] error:', err));
+  }
+
+  private buildResourceId(chatId: number | string): string {
+    return `${this.resourcePrefix}:${String(chatId)}`;
   }
 
   async cleanup(): Promise<void> {
@@ -360,10 +366,10 @@ export class TelegramIntegration {
               for (const mem of memories) {
                 try {
                   const maybeCreate = (mem as unknown as { createThread?: (args: { resourceId: string; threadId: string; metadata?: Record<string, unknown>; title?: string }) => Promise<any> }).createThread;
-                  if (typeof maybeCreate === 'function') {
-                    console.log('[THREAD] createThread cfg_new', { resourceId: this.agentName, threadId: newThreadId, title, user_id: String(chatId) });
-                    await maybeCreate({ resourceId: this.agentName, threadId: newThreadId, metadata: { user_id: String(chatId) }, title });
-                  }
+                if (typeof maybeCreate === 'function') {
+                  console.log('[THREAD] createThread cfg_new', { resourceId: this.buildResourceId(chatId), threadId: newThreadId, title, user_id: String(chatId) });
+                  await maybeCreate({ resourceId: this.buildResourceId(chatId), threadId: newThreadId, metadata: { user_id: String(chatId) }, title });
+                }
                 } catch (e) { console.warn('[THREAD] createThread cfg_new (mem) error', e); }
               }
             } catch (e) { console.warn('[THREAD] createThread cfg_new error', e); }
@@ -381,7 +387,7 @@ export class TelegramIntegration {
             if (memory && lastThreadId) {
               const maybeDelete = (memory as unknown as { deleteThread?: (args: { resourceId: string; threadId: string }) => Promise<void> }).deleteThread;
               if (typeof maybeDelete === 'function') {
-                await maybeDelete({ resourceId: this.agentName, threadId: lastThreadId });
+                await maybeDelete({ resourceId: this.buildResourceId(chatId), threadId: lastThreadId });
               }
             }
           } catch (e) {
@@ -397,8 +403,17 @@ export class TelegramIntegration {
           break;
         }
         case 'cfg_pay': {
-          const raw = '💳 Оплата пока недоступна внутри Telegram. Свяжитесь с администратором, после оплаты ваш аккаунт будет активирован.';
-          await this.bot.sendMessage(chatId, this.escapeMarkdown(raw), { parse_mode: 'MarkdownV2' });
+          const base = env.app.publicUrl || '';
+          if (!base) {
+            const raw = '💳 Оплата: откройте мини‑приложение (Меню → Открыть мини‑приложение).';
+            await this.bot.sendMessage(chatId, this.escapeMarkdown(raw), { parse_mode: 'MarkdownV2' });
+            break;
+          }
+          const url = `${base.replace(/\/$/, '')}/miniapp/pay?chatId=${encodeURIComponent(String(chatId))}`;
+          const kb: TelegramBot.InlineKeyboardMarkup = {
+            inline_keyboard: [[{ text: 'Открыть оплату', web_app: { url } as any }]],
+          };
+          await this.bot.sendMessage(chatId, this.escapeMarkdown('Откройте страницу оплаты:'), { reply_markup: kb, parse_mode: 'MarkdownV2' });
           break;
         }
         case 'cfg_info': {
@@ -680,10 +695,19 @@ export class TelegramIntegration {
       return;
     }
 
-    // Handle /pay placeholder (stub)
+    // Handle /pay → open miniapp payment page
     if (normalizedText === "/pay") {
-      const raw = "💳 Оплата пока недоступна внутри Telegram. Свяжитесь с администратором, после оплаты ваш аккаунт будет активирован.";
-      await this.bot.sendMessage(chatId, this.escapeMarkdown(raw), { parse_mode: "MarkdownV2" });
+      const base = env.app.publicUrl || '';
+      if (!base) {
+        const raw = '💳 Оплата: откройте мини‑приложение через Меню → Конфиги → Открыть мини‑приложение.';
+        await this.bot.sendMessage(chatId, this.escapeMarkdown(raw), { parse_mode: 'MarkdownV2' });
+        return;
+      }
+      const url = `${base.replace(/\/$/, '')}/miniapp/pay?chatId=${encodeURIComponent(String(chatId))}`;
+      const kb: TelegramBot.InlineKeyboardMarkup = {
+        inline_keyboard: [[{ text: 'Открыть оплату', web_app: { url } as any }]],
+      };
+      await this.bot.sendMessage(chatId, this.escapeMarkdown('Откройте страницу оплаты:'), { reply_markup: kb, parse_mode: 'MarkdownV2' });
       return;
     }
 
@@ -949,8 +973,8 @@ export class TelegramIntegration {
             try {
               const maybeCreate = (mem as unknown as { createThread?: (args: { resourceId: string; threadId: string; metadata?: Record<string, unknown>; title?: string }) => Promise<any> }).createThread;
               if (typeof maybeCreate === 'function') {
-                console.log('[THREAD] createThread /new', { resourceId: this.agentName, threadId: newThreadId, title, user_id: String(chatId) });
-                await maybeCreate({ resourceId: this.agentName, threadId: newThreadId, metadata: { user_id: String(chatId) }, title });
+                console.log('[THREAD] createThread /new', { resourceId: this.buildResourceId(chatId), threadId: newThreadId, title, user_id: String(chatId) });
+                await maybeCreate({ resourceId: this.buildResourceId(chatId), threadId: newThreadId, metadata: { user_id: String(chatId) }, title });
               }
             } catch (e) { console.warn('[THREAD] createThread /new (mem) error', e); }
           }
@@ -1101,8 +1125,8 @@ export class TelegramIntegration {
               try {
                 const maybeCreate = (mem as unknown as { createThread?: (args: { resourceId: string; threadId: string; metadata?: Record<string, unknown>; title?: string }) => Promise<any> }).createThread;
                 if (typeof maybeCreate === 'function') {
-                  console.log('[THREAD] createThread auto', { resourceId: this.agentName, threadId, title, user_id: String(chatId) });
-                  await maybeCreate({ resourceId: this.agentName, threadId, metadata: { user_id: String(chatId) }, title });
+                  console.log('[THREAD] createThread auto', { resourceId: this.buildResourceId(chatId), threadId, title, user_id: String(chatId) });
+                  await maybeCreate({ resourceId: this.buildResourceId(chatId), threadId, metadata: { user_id: String(chatId) }, title });
                 }
               } catch (e) { console.warn('[THREAD] createThread auto (mem) error', e); }
             }
@@ -1113,6 +1137,53 @@ export class TelegramIntegration {
       }
 
       // Note: DB pointer is updated only when thread changes (create/new/reset)
+
+      // Ensure the thread exists in the vNext network memory with the unified resourceId
+      try {
+        const network = (mastra as any).vnext_getNetwork ? (mastra as any).vnext_getNetwork('teamNetwork') : null;
+        const netMem = network ? (typeof network.getMemory === 'function' ? network.getMemory() : (network.memory ?? null)) : null;
+        if (netMem) {
+          const maybeGet = (netMem as unknown as { getThreadById?: (args: { threadId: string }) => Promise<any> }).getThreadById;
+          const maybeCreate = (netMem as unknown as { createThread?: (args: { resourceId: string; threadId: string; metadata?: Record<string, unknown>; title?: string }) => Promise<any> }).createThread;
+          if (typeof maybeGet === 'function' && typeof maybeCreate === 'function') {
+            const existing = await maybeGet({ threadId });
+            if (!existing) {
+              const title = (msg.text || '').trim().slice(0, 20) || 'Новый чат';
+              console.log('[THREAD] ensure exists in network', { resourceId: this.buildResourceId(chatId), threadId, title });
+              await maybeCreate({ resourceId: this.buildResourceId(chatId), threadId, title, metadata: { user_id: String(chatId) } });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[THREAD] ensure network existence error', e);
+      }
+
+      // Reconcile the agent memory: if thread exists with a different resourceId, recreate under the unified resource
+      try {
+        const agent = (this.resolveAgent ? this.resolveAgent(this.agentName) : null) || n8nAgent;
+        const aMem = agent?.getMemory();
+        if (aMem) {
+          const aGet = (aMem as unknown as { getThreadById?: (args: { threadId: string }) => Promise<any> }).getThreadById;
+          const aDelete = (aMem as unknown as { deleteThread?: (args: { resourceId: string; threadId: string }) => Promise<void> }).deleteThread;
+          const aCreate = (aMem as unknown as { createThread?: (args: { resourceId: string; threadId: string; metadata?: Record<string, unknown>; title?: string }) => Promise<any> }).createThread;
+          if (typeof aGet === 'function') {
+            const t = await aGet({ threadId });
+            const desired = this.buildResourceId(chatId);
+            const currentRes = t && typeof t.resourceId === 'string' ? t.resourceId : null;
+            if (currentRes && currentRes !== desired && typeof aDelete === 'function' && typeof aCreate === 'function') {
+              try { await aDelete({ resourceId: currentRes, threadId }); } catch {}
+              const title = (msg.text || '').trim().slice(0, 20) || 'Новый чат';
+              console.log('[THREAD] recreate agent thread under unified resource', { from: currentRes, to: desired, threadId });
+              await aCreate({ resourceId: desired, threadId, title, metadata: { user_id: String(chatId) } });
+            } else if (!t && typeof aCreate === 'function') {
+              const title = (msg.text || '').trim().slice(0, 20) || 'Новый чат';
+              await aCreate({ resourceId: desired, threadId, title, metadata: { user_id: String(chatId) } });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[THREAD] reconcile agent memory error', e);
+      }
 
       // Ensure thread metadata.user_id is set for the active thread and set title from first message (<=20 chars)
       try {
@@ -1158,7 +1229,11 @@ export class TelegramIntegration {
       console.log('🔧 [TELEGRAM] Creating runtime context for user:', chatId);
       const runtimeContext = new RuntimeContext<UserRuntimeContext>();
       runtimeContext.set("user-chat-id", chatId.toString());
-      runtimeContext.set("agent-name", this.agentName);
+      // Выберем корректное имя агента для ключей/привязки: сеть → orchestratorAgent, иначе → n8nAgent
+      const useNetwork = String(process.env.USE_VNEXT_NETWORK || '').toLowerCase() === 'true';
+      const selectedNetwork = useNetwork && (mastra as any).vnext_getNetwork ? (mastra as any).vnext_getNetwork('teamNetwork') : null;
+      const chosenAgentName = 'n8nAgent';
+      runtimeContext.set("agent-name", chosenAgentName);
       runtimeContext.set("channel", "telegram");
       runtimeContext.set("n8n-api-key", validationResult.apiKey!);
       console.log('🔧 [TELEGRAM] Runtime context created with user data:', {
@@ -1170,17 +1245,24 @@ export class TelegramIntegration {
       const pooledClient = getMcpClientForRuntime(runtimeContext);
 
       // Route via Mastra vNext Network natively
-      const network = (mastra as any).vnext_getNetwork ? (mastra as any).vnext_getNetwork('teamNetwork') : null;
-      const stream = network
+      const network = selectedNetwork;
+        const stream = network
         ? await network.stream(text, {
-            memory: { thread: threadId, resource: this.agentName },
+            // Use chatId as resource to unify working memory across agents in the network
+            memory: { thread: threadId, resource: this.buildResourceId(chatId) },
+            // Back-compat for older cores
+            threadId: threadId,
+            resourceId: this.buildResourceId(chatId),
             runtimeContext,
             maxSteps: 30,
             // Передаём весь набор MCP toolsets в сетку агентов, чтобы все видели те же инструменты
             toolsets: await pooledClient.getToolsets(),
           })
         : await ((this.resolveAgent ? this.resolveAgent(this.agentName) : null) || n8nAgent).stream(text, {
-            memory: { thread: threadId, resource: this.agentName },
+            memory: { thread: threadId, resource: this.buildResourceId(chatId) },
+            // Back-compat for older cores
+            threadId: threadId,
+            resourceId: this.buildResourceId(chatId),
             runtimeContext,
             toolsets: await pooledClient.getToolsets(),
           });

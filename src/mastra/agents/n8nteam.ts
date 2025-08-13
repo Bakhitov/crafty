@@ -12,8 +12,42 @@ import { n8nActivateTool } from "../tools/n8n-activate-tool";
 import { n8nVariablesTool } from "../tools/n8n-variables-tool";
 import { n8nCredentialsCrudTool } from "../tools/n8n-credentials-crud-tool";
 import { getMcpClientForRuntime } from "../mcp";
+import { filterToolsByRole, type AgentRole } from "../services/toolPolicy";
 
 const PROMPTS_DIR = path.resolve(process.cwd(), "agents_promtps");
+
+// Unified working memory template for all agents
+const WORKING_MEMORY_TEMPLATE = `# Working memory
+- **Workflow name**:
+- **Workflow ID**:
+- **Workflow nodes and their configurations**:
+- **Workflow JSON structure draft**: {
+  "name": example_name,
+  "nodes":
+  ...}
+- **Status completed**:
+- **Credentials**:
+- **Variables**:
+`;
+
+// Helper to filter MCP tools by safe prefixes (role-based scoping)
+async function getFilteredMcpTools(runtimeContext: DIContext<UserRuntimeContext>, allowedPrefixes: string[] | null, role?: AgentRole): Promise<Record<string, any>> {
+  try {
+    const client = getMcpClientForRuntime(runtimeContext as unknown as DIContext<UserRuntimeContext>);
+    const all = await client.getTools();
+    if (role) return filterToolsByRole(role, all as Record<string, any>);
+    if (allowedPrefixes) {
+      const filtered: Record<string, any> = {};
+      for (const [toolId, toolDef] of Object.entries(all as Record<string, any>)) {
+        if (allowedPrefixes.some((p) => toolId.startsWith(p))) filtered[toolId] = toolDef;
+      }
+      return filtered;
+    }
+    return all as Record<string, any>;
+  } catch {
+    return {};
+  }
+}
 
 function readPromptFile(fileName: string): string {
   const full = path.join(PROMPTS_DIR, fileName);
@@ -52,6 +86,18 @@ function createAskAgentTool(toolId: string, targetAgentKey: string, description:
     description,
     inputSchema: z.object({
       prompt: z.string().describe("Question or task to delegate to the target agent"),
+      context: z
+        .object({
+          project: z.string().optional(),
+          phase: z.string().optional(),
+          completed: z.array(z.string()).optional(),
+          nextSteps: z.array(z.string()).optional(),
+          handoff: z.any().optional(),
+          // orchestration hints
+          mode: z.enum(['fast', 'standard', 'hardened']).optional(),
+          userLevel: z.enum(['pro', 'beginner']).optional(),
+        })
+        .optional(),
     }),
     outputSchema: z.object({ text: z.string() }).optional(),
     execute: async ({ context, mastra, threadId, resourceId }) => {
@@ -59,10 +105,26 @@ function createAskAgentTool(toolId: string, targetAgentKey: string, description:
       if (!target) {
         return { text: `Agent ${targetAgentKey} not found` } as any;
       }
-      const delegatedThread = threadId ? `${String(threadId)}::${targetAgentKey}` : undefined;
-      const stream = await target.stream(context.prompt, {
-        memory: delegatedThread && resourceId ? { thread: delegatedThread, resource: String(resourceId) } : undefined,
-      });
+      // Keep the same thread/resource to share a single working memory across agents
+      const delegatedThread = threadId ? String(threadId) : undefined;
+      const enriched = [
+        "### Orchestrated Task",
+        `Task: ${context.prompt}`,
+        context.context
+          ? `\n### Context\n${JSON.stringify(context.context, null, 2)}`
+          : "",
+        "\n### Expectations\n- Deliver according to your role's mandatory process\n- Update working memory sections\n- Produce required handoff bundle",
+        "\n### Validation Profile & Communication Style\n- Use validation profile based on mode: fast→runtime, standard→runtime(+extra), hardened→strict\n- Adapt tone to userLevel: pro→concise/factual; beginner→with brief explanations and examples",
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const args: any = {};
+      if (delegatedThread && resourceId) {
+        args.memory = { thread: delegatedThread, resource: String(resourceId) };
+        args.threadId = delegatedThread;
+        args.resourceId = String(resourceId);
+      }
+      const stream = await target.stream(enriched, args);
       let text = "";
       for await (const chunk of stream.textStream) text += chunk;
       return { text } as any;
@@ -97,31 +159,13 @@ export const architectAgent = new Agent({
   instructions: architectPrompt,
   model: unifiedModelResolver(),
   tools: async ({ runtimeContext }) => {
-    // Показываем ВСЕ MCP‑инструменты без фильтрации
-    try {
-      const client = getMcpClientForRuntime(runtimeContext as unknown as DIContext<UserRuntimeContext>);
-      const all = await client.getTools();
-      return all as Record<string, any>;
-    } catch {
-      return {};
-    }
+    return await getFilteredMcpTools(runtimeContext as unknown as DIContext<UserRuntimeContext>, null, 'architect');
   },
   memory: new Memory({
     options: {
       workingMemory: {
         enabled: true,
-        template: `# Working memory
-- **Workflow name**: 
-- **Workflow ID**:
-- **Workflow nodes and their configurations**:
-- **Workflow JSON structure draft**: {
-  "name": example_name,
-  "nodes": 
-  ...}
-- **Status completed**:
-- **Credentials**: 
-- **Variables**: 
-`,
+        template: WORKING_MEMORY_TEMPLATE,
       },
       threads: { generateTitle: true },
       semanticRecall: false,
@@ -137,30 +181,14 @@ export const builderAgent = new Agent({
   instructions: builderPrompt,
   model: unifiedModelResolver(),
   tools: async ({ runtimeContext }) => {
-    try {
-      const client = getMcpClientForRuntime(runtimeContext as unknown as DIContext<UserRuntimeContext>);
-      const all = await client.getTools();
-      return { ...all, "n8n-credentials-crud": n8nCredentialsCrudTool } as Record<string, any>;
-    } catch {
-      return { "n8n-credentials-crud": n8nCredentialsCrudTool } as Record<string, any>;
-    }
+    const filtered = await getFilteredMcpTools(runtimeContext as unknown as DIContext<UserRuntimeContext>, null, 'builder');
+    return { ...filtered, "n8n-credentials-crud": n8nCredentialsCrudTool } as Record<string, any>;
   },
   memory: new Memory({
     options: {
       workingMemory: {
         enabled: true,
-        template: `# Working memory
-- **Workflow name**: 
-- **Workflow ID**:
-- **Workflow nodes and their configurations**:
-- **Workflow JSON structure draft**: {
-  "name": example_name,
-  "nodes": 
-  ...}
-- **Status completed**:
-- **Credentials**: 
-- **Variables**: 
-`,
+        template: WORKING_MEMORY_TEMPLATE,
       },
       threads: { generateTitle: true },
       semanticRecall: false,
@@ -179,18 +207,7 @@ export const deployerAgent = new Agent({
     options: {
       workingMemory: {
         enabled: true,
-        template: `# Working memory
-- **Workflow name**: 
-- **Workflow ID**:
-- **Workflow nodes and their configurations**:
-- **Workflow JSON structure draft**: {
-  "name": example_name,
-  "nodes": 
-  ...}
-- **Status completed**:
-- **Credentials**: 
-- **Variables**: 
-`,
+        template: WORKING_MEMORY_TEMPLATE,
       },
       threads: { generateTitle: true },
       semanticRecall: false,
@@ -199,13 +216,8 @@ export const deployerAgent = new Agent({
   defaultGenerateOptions: { maxSteps: 30 },
   defaultStreamOptions: { maxSteps: 30 },
   tools: async ({ runtimeContext }) => {
-    try {
-      const client = getMcpClientForRuntime(runtimeContext as unknown as DIContext<UserRuntimeContext>);
-      const all = await client.getTools();
-      return { ...all, "activate-n8n-workflow": n8nActivateTool } as Record<string, any>;
-    } catch {
-      return { "activate-n8n-workflow": n8nActivateTool } as Record<string, any>;
-    }
+    const filtered = await getFilteredMcpTools(runtimeContext as unknown as DIContext<UserRuntimeContext>, null, 'deployer');
+    return { ...filtered, "activate-n8n-workflow": n8nActivateTool } as Record<string, any>;
   },
 });
 
@@ -215,30 +227,14 @@ export const qaAgent = new Agent({
   instructions: qaPrompt,
   model: unifiedModelResolver(),
   tools: async ({ runtimeContext }) => {
-    try {
-      const client = getMcpClientForRuntime(runtimeContext as unknown as DIContext<UserRuntimeContext>);
-      const all = await client.getTools();
-      return { ...all, "n8n-credentials-crud": n8nCredentialsCrudTool } as Record<string, any>;
-    } catch {
-      return { "n8n-credentials-crud": n8nCredentialsCrudTool } as Record<string, any>;
-    }
+    const filtered = await getFilteredMcpTools(runtimeContext as unknown as DIContext<UserRuntimeContext>, null, 'qa');
+    return { ...filtered, "n8n-credentials-crud": n8nCredentialsCrudTool } as Record<string, any>;
   },
   memory: new Memory({
     options: {
       workingMemory: {
         enabled: true,
-        template: `# Working memory
-- **Workflow name**: 
-- **Workflow ID**:
-- **Workflow nodes and their configurations**:
-- **Workflow JSON structure draft**: {
-  "name": example_name,
-  "nodes": 
-  ...}
-- **Status completed**:
-- **Credentials**: 
-- **Variables**: 
-`,
+        template: WORKING_MEMORY_TEMPLATE,
       },
       threads: { generateTitle: true },
       semanticRecall: false,
@@ -262,6 +258,31 @@ export const orchestratorAgent = new Agent({
       "activate-n8n-workflow": n8nActivateTool,
       "n8n-variables": n8nVariablesTool,
       "n8n-credentials-crud": n8nCredentialsCrudTool,
+      // Orchestrated pipeline tool
+      run_standard_pipeline: createTool({
+        id: 'run_standard_pipeline',
+        description: 'Run the standard route: Architect → Builder → QA → Deployer',
+        inputSchema: z.object({ prompt: z.string().describe('High-level task description') }),
+        outputSchema: z.object({ status: z.string() }),
+        execute: async ({ context, mastra, threadId, resourceId }) => {
+          const input = context.prompt;
+          const architect = mastra?.getAgent('architectAgent');
+          const builder = mastra?.getAgent('builderAgent');
+          const qa = mastra?.getAgent('qaAgent');
+          const deployer = mastra?.getAgent('deployerAgent');
+          const mem = threadId && resourceId ? { memory: { thread: String(threadId), resource: String(resourceId) } } : {};
+
+          // 1) Architecture
+          await architect?.generate(input, mem as any);
+          // 2) Build
+          await builder?.generate('Assemble nodes and configs based on approved design', mem as any);
+          // 3) QA
+          await qa?.generate('Validate nodes, connections, expressions, run tests', mem as any);
+          // 4) Deploy
+          await deployer?.generate('Deploy workflow and activate', mem as any);
+          return { status: 'completed' } as any;
+        },
+      }),
     } as Record<string, any>;
 
     // Orchestrator also has MCP tools for discovery and validation to supervise flow

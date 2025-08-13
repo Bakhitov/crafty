@@ -1,4 +1,4 @@
-
+// @ts-nocheck
 import { Mastra } from '@mastra/core/mastra';
 import { PinoLogger } from '@mastra/loggers';
 import { n8nAgent } from './agents/n8nAgent';
@@ -14,7 +14,7 @@ import { UserRegistrationService } from './services/userRegistrationService';
 import { env } from './config/environment';
 import { mcpPool } from './mcp';
 import { RuntimeContext } from '@mastra/core/di';
-import type { UserRuntimeContext } from './mcp';
+// NOTE: Avoid `import type` to keep Mastra bundler parser happy
 
 // Export tools
 export { n8nActivateTool } from './tools/n8n-activate-tool';
@@ -24,7 +24,9 @@ export { n8nCredentialsCrudTool } from './tools/n8n-credentials-crud-tool';
 // export { weatherTool } from './tools/weather-tool';
 
 // Export MCP utilities
-export { createMcpClient, getN8nApiKey, type UserRuntimeContext } from './mcp';
+export { createMcpClient, getN8nApiKey } from './mcp';
+
+//
 
 const storage = new PostgresStore({
   connectionString: env.database.url,
@@ -136,11 +138,17 @@ export const mastra = new Mastra({
       <div class="card" style="margin-top:12px;">
         <div class="group">
           <label>n8n URL (если используете свой сервер)</label>
-          <input id="n8n_url" placeholder="https://n8n.example.com" />
+          <input id="n8n_url" placeholder="При пустом значении используется общий сервер" />
         </div>
         <div class="group">
-           <label>n8n API key</label>
-           <input id="n8n_api_key" placeholder="personal-n8n-key" />
+          <label>n8n API key (введите свой ключ API n8n ) </label>
+          <input id="n8n_api_key" placeholder="personal-n8n-key" />
+          <label><input type="checkbox" id="use_env_n8n_key"> Использовать общий тестовый ключ</label>
+        </div>
+        <br>
+        <div class="group">
+          <label>Для получения персонального ключа </label>
+          <label>обратитесь к менеджеру техподдержки</label>
         </div>
       </div>
         <div class="row" style="margin-top:10px;">
@@ -150,6 +158,7 @@ export const mastra = new Mastra({
     </div>
     <script>
       const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+      const ENV_N8N_API_KEY = ${JSON.stringify(env.n8n.apiKey || '')};
       const CATALOG = [
         { key: 'openai', name: 'OpenAI', models: ['gpt-4o','gpt-4o-mini','gpt-4.1','gpt-4.1-mini'] },
         { key: 'anthropic', name: 'Anthropic', models: ['claude-3-5-sonnet-20240620','claude-3-5-haiku-20241022'] },
@@ -261,6 +270,19 @@ export const mastra = new Mastra({
           }
         });
       }
+      const $useEnvN8nKey = document.getElementById('use_env_n8n_key');
+      if ($useEnvN8nKey) {
+        if (!ENV_N8N_API_KEY) { $useEnvN8nKey.disabled = true; $useEnvN8nKey.title = 'Ключ из окружения не задан'; }
+        $useEnvN8nKey.addEventListener('change', (e) => {
+          const chk = e.target;
+          const $n8nKey = document.getElementById('n8n_api_key');
+          if (!$n8nKey) return;
+          if (chk && chk.checked) {
+            $n8nKey.value = ENV_N8N_API_KEY || '';
+            if ($n8nKey.dataset) { delete $n8nKey.dataset.masked; delete $n8nKey.dataset.original; }
+          }
+        });
+      }
       const $llmKeyInput = document.getElementById('api_key_llm');
       if ($llmKeyInput) {
         $llmKeyInput.addEventListener('input', (e) => {
@@ -324,23 +346,10 @@ export const mastra = new Mastra({
         window.location.href = url;
       }
 
-      async function showPay() {
+      function showPay() {
         const chatId = resolveChatId();
-        if (!chatId) {
-          if (tg) tg.showAlert('chatId не определён');
-          return;
-        }
-        try {
-          const r = await fetch('/miniapp/pay/activate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ chatId }) });
-          const j = await r.json().catch(()=>({}));
-          if (r.ok && j && j.success) {
-            if (tg) { try { tg.HapticFeedback.notificationOccurred('success'); } catch {} tg.showAlert('Аккаунт активирован'); }
-          } else {
-            if (tg) { try { tg.HapticFeedback.notificationOccurred('error'); } catch {} tg.showAlert('Не удалось активировать'); }
-          }
-        } catch (_) {
-          if (tg) { try { tg.HapticFeedback.notificationOccurred('error'); } catch {} tg.showAlert('Ошибка сети'); }
-        }
+        const url = '/miniapp/pay?chatId=' + encodeURIComponent(chatId || '');
+        window.location.href = url;
       }
 
       function openSupport() {
@@ -458,6 +467,212 @@ export const mastra = new Mastra({
             return c.html(html, 200);
           }
 
+          // Payment page
+          if (c.req.method === 'GET' && pathname === '/miniapp/pay') {
+            const chatId = url.searchParams.get('chatId') || '';
+            const html = `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Оплата</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif; margin: 0; padding: 0; color: var(--tg-theme-text-color,#111); background: var(--tg-theme-bg-color,#fff); }
+      .container { width: 100%; max-width: 680px; margin: 0 auto; padding: 12px; }
+      h1 { font-size: 18px; margin: 0 0 12px; }
+      h2 { font-size: 16px; margin: 16px 0 8px; }
+      .card { border-radius: 12px; padding: 12px; background: var(--tg-theme-secondary-bg-color,#f6f6f6); box-shadow: 0 1px 0 rgba(0,0,0,.04) inset; }
+      .row { display: grid; grid-template-columns: 1fr; gap: 8px; }
+      .btn { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,.12); background: var(--tg-theme-secondary-bg-color,#f5f5f5); color: var(--tg-theme-text-color,#111); text-align: center; cursor: pointer; display:inline-block; }
+      .btn:active { transform: translateY(1px); opacity: .95; }
+      .btn.primary { background: #2481cc; color: #fff; border-color: transparent; }
+      .kv { display:grid; grid-template-columns: 140px 1fr; gap:8px; font-size:14px; }
+      .kv .key { opacity:.7; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+      .links { margin-top: 12px; font-size: 14px; }
+      .links a { color: var(--tg-theme-link-color,#2481cc); text-decoration: none; display:inline-block; margin-right:12px; }
+      .toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Оплата</h1>
+      <div class="card">
+        <h2>Robokassa (скоро будет)</h2>
+        <p>Виджет онлайн‑оплаты Robokassa будет доступен в ближайшее время.</p>
+        <button class="btn" disabled>Оплатить через Robokassa — скоро</button>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <h2>Оплата по реквизитам</h2>
+        <div class="kv">
+          <div class="key">Компания</div><div class="val mono">ИП БАХИТОВ</div>
+          <div class="key">БИН (ИИН)</div><div class="val mono">910130300037</div>
+          <div class="key">Банк</div><div class="val mono">АО "Kaspi Bank"</div>
+          <div class="key">КБе</div><div class="val mono">19</div>
+          <div class="key">БИК</div><div class="val mono">CASPKZKA</div>
+          <div class="key">Номер счета</div><div class="val mono">KZ34722S000042152520</div>
+        </div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <h2>Перевод на карту</h2>
+        <div class="mono">4400 4302 1225 8039</div>
+        <div>Получатель: AKHAN BAKHITOV</div>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <h2>Перевод по номеру телефона</h2>
+        <div>Банки: Freedom, Kaspi, CenterCredit</div>
+        <div class="mono">+7 747 531 86 23</div>
+      </div>
+
+      <div class="links">
+        <a href="/miniapp/docs/personal">Персональные данные</a>
+        <a href="/miniapp/docs/offer">Публичная оферта/Политика платежей</a>
+      </div>
+
+      <div class="card" style="margin-top:12px;">
+        <h2>Контакты менеджера</h2>
+        <div>Менеджер: <span class="mono">+77066318623</span></div>
+        <div class="toolbar">
+          <button id="btn_manager_tg" class="btn">Telegram</button>
+          <button id="btn_manager_wa" class="btn">WhatsApp</button>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;">
+        <button id="btn_back" class="btn">Назад</button>
+      </div>
+    </div>
+    <script>
+      const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+      if (tg) tg.ready();
+      document.getElementById('btn_back').addEventListener('click', () => { window.history.back(); });
+      document.getElementById('btn_manager_tg').addEventListener('click', () => {
+        const tel = '77066318623';
+        const deepLink = 'tg://resolve?phone=' + tel;
+        const webLink = 'https://t.me/+' + tel;
+        try {
+          window.location.href = deepLink;
+          setTimeout(() => { try { window.open(webLink, '_blank'); } catch (_) {} }, 500);
+        } catch (_) {
+          try { window.open(webLink, '_blank'); } catch (_) {}
+        }
+      });
+      document.getElementById('btn_manager_wa').addEventListener('click', () => {
+        const tel = '77066318623';
+        const wa = 'https://wa.me/' + tel;
+        if (tg && typeof tg.openLink === 'function') { tg.openLink(wa); } else { try { window.open(wa, '_blank'); } catch (_) { window.location.href = wa; } }
+      });
+    </script>
+  </body>
+  </html>`;
+            return c.html(html, 200);
+          }
+
+          // Docs: Personal data
+          if (c.req.method === 'GET' && pathname === '/miniapp/docs/personal') {
+            try {
+              const path = await import('path');
+              const fs = await import('fs/promises');
+              const filePath = path.resolve(process.cwd(), 'оферта услуг и политика', 'персданные.txt');
+              const content = await fs.readFile(filePath, 'utf8').catch(() => 'Документ будет опубликован скоро.');
+              const esc = (t) => String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+              const html = `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Персональные данные</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif; margin: 0; padding: 0; color: var(--tg-theme-text-color,#111); background: var(--tg-theme-bg-color,#fff); }
+      .container { width: 100%; max-width: 680px; margin: 0 auto; padding: 12px; }
+      h1 { font-size: 18px; margin: 0 0 12px; }
+      .card { border-radius: 12px; padding: 12px; background: var(--tg-theme-secondary-bg-color,#f6f6f6); box-shadow: 0 1px 0 rgba(0,0,0,.04) inset; }
+      .meta { font-size: 12px; opacity: .7; margin-bottom: 8px; }
+      pre { white-space: pre-wrap; word-wrap: break-word; }
+      .btn { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,.12); background: var(--tg-theme-secondary-bg-color,#f5f5f5); color: var(--tg-theme-text-color,#111); text-align: center; cursor: pointer; display:inline-block; }
+      .btn:active { transform: translateY(1px); opacity: .95; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Персональные данные</h1>
+      <div class="meta">ID аккаунта: <span id="cid">—</span></div>
+      <div class="card"><pre>${esc(content)}</pre></div>
+      <div style="margin-top:12px;">
+        <button id="btn_back" class="btn">Назад</button>
+      </div>
+    </div>
+    <script>
+      const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+      if (tg) tg.ready();
+      try { const id = String(tg?.initDataUnsafe?.chat?.id || tg?.initDataUnsafe?.user?.id || ''); if (id) document.getElementById('cid').textContent = id; } catch {}
+      document.getElementById('btn_back').addEventListener('click', () => { window.history.back(); });
+    </script>
+  </body>
+</html>`;
+              return c.html(html, 200);
+            } catch (e) {
+              return c.html('Не удалось загрузить документ', 500);
+            }
+          }
+
+          // Docs: Offer / Payments policy
+          if (c.req.method === 'GET' && pathname === '/miniapp/docs/offer') {
+            try {
+              const path = await import('path');
+              const fs = await import('fs/promises');
+              const filePath = path.resolve(process.cwd(), 'оферта услуг и политика', 'Политика проведения платежей.txt');
+              const content = await fs.readFile(filePath, 'utf8').catch(() => 'Документ будет опубликован скоро.');
+              const esc = (t) => String(t).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+              const html = `<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Публичная оферта и политика платежей</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+      * { box-sizing: border-box; }
+      body { font-family: system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif; margin: 0; padding: 0; color: var(--tg-theme-text-color,#111); background: var(--tg-theme-bg-color,#fff); }
+      .container { width: 100%; max-width: 680px; margin: 0 auto; padding: 12px; }
+      h1 { font-size: 18px; margin: 0 0 12px; }
+      .card { border-radius: 12px; padding: 12px; background: var(--tg-theme-secondary-bg-color,#f6f6f6); box-shadow: 0 1px 0 rgba(0,0,0,.04) inset; }
+      .meta { font-size: 12px; opacity: .7; margin-bottom: 8px; }
+      pre { white-space: pre-wrap; word-wrap: break-word; }
+      .btn { padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,.12); background: var(--tg-theme-secondary-bg-color,#f5f5f5); color: var(--tg-theme-text-color,#111); text-align: center; cursor: pointer; display:inline-block; }
+      .btn:active { transform: translateY(1px); opacity: .95; }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Публичная оферта и политика платежей</h1>
+      <div class="meta">ID аккаунта: <span id="cid">—</span></div>
+      <div class="card"><pre>${esc(content)}</pre></div>
+      <div style="margin-top:12px;">
+        <button id="btn_back" class="btn">Назад</button>
+      </div>
+    </div>
+    <script>
+      const tg = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
+      if (tg) tg.ready();
+      try { const id = String(tg?.initDataUnsafe?.chat?.id || tg?.initDataUnsafe?.user?.id || ''); if (id) document.getElementById('cid').textContent = id; } catch {}
+      document.getElementById('btn_back').addEventListener('click', () => { window.history.back(); });
+    </script>
+  </body>
+</html>`;
+              return c.html(html, 200);
+            } catch (e) {
+              return c.html('Не удалось загрузить документ', 500);
+            }
+          }
+
           // Info page with full description of the agent team and how to interact
           if (c.req.method === 'GET' && pathname === '/miniapp/info') {
             const chatId = url.searchParams.get('chatId') || '';
@@ -556,76 +771,92 @@ export const mastra = new Mastra({
             if (!chatIdQ) return c.json({ error: 'chatId required' }, 400);
             const user = userCache.getUserByContactId(chatIdQ);
             const dbUser = await UserRegistrationService.findByContactId(chatIdQ);
-            const maskKey = (k: string | null | undefined): string | null => {
+            /** @param {any} k */
+            const maskKey = (k) => {
               try {
                 if (!k || typeof k !== 'string') return null;
                 return k.length <= 8 ? `${k[0]}***${k[k.length - 1]}` : `${k.slice(0,4)}***${k.slice(-4)}`;
               } catch { return null; }
             };
-            const n8n_api_key_masked = user && (user as any)?.n8n_api_key ? maskKey((user as any).n8n_api_key) : null;
+            const n8n_api_key_masked = user && user.n8n_api_key ? maskKey(user.n8n_api_key) : null;
             return c.json({
-              contact_id: user?.contact_id || null,
-              provider_llm: (user as any)?.provider_llm || null,
-              model_llm: (user as any)?.model_llm || null,
-              n8n_url: (user as any)?.n8n_url || null,
-              has_api_key_llm: !!(user as any)?.api_key_llm,
-              has_n8n_api_key: !!(user as any)?.n8n_api_key,
-              api_key_llm_masked: user && (user as any)?.api_key_llm ? maskKey((user as any).api_key_llm) : null,
+              contact_id: (user && user.contact_id) || null,
+              provider_llm: (user && user.provider_llm) || null,
+              model_llm: (user && user.model_llm) || null,
+              n8n_url: (user && user.n8n_url) || null,
+              has_api_key_llm: !!(user && user.api_key_llm),
+              has_n8n_api_key: !!(user && user.n8n_api_key),
+              api_key_llm_masked: user && user.api_key_llm ? maskKey(user.api_key_llm) : null,
               n8n_api_key_masked,
               last_thread_id: dbUser?.last_thread_id || null,
             }, 200);
           }
 
-          // API: list threads for contact via metadata.user_id filter
+          // API: list threads for contact via metadata.user_id filter (agents' memory)
           if (c.req.method === 'GET' && pathname === '/threads/list') {
             const chatIdQ = url.searchParams.get('chatId');
             if (!chatIdQ) return c.json({ error: 'chatId required' }, 400);
-            const resourceIds = ['orchestratorAgent','n8nAgent'];
-            const collected: any[] = [];
-            for (const resId of resourceIds) {
-              try {
-                const agentInst = mastra.getAgent(resId as any);
-                const memory = agentInst?.getMemory();
-                const maybeList = (memory && (memory as any).getThreadsByResourceId) ? (memory as any).getThreadsByResourceId : null;
-                if (typeof maybeList === 'function') {
-                  const threads = await maybeList({ resourceId: resId, orderBy: 'updatedAt', sortDirection: 'DESC' });
-                  for (const t of threads || []) {
-                    const meta = (t && t.metadata) || {};
-                    if (meta && String(meta.user_id || '') === String(chatIdQ)) {
-                      collected.push({ id: t.id, title: t.title || null, resourceId: resId, updatedAt: t.updatedAt });
+            // Threads may exist under several resource namespaces:
+            // - New unified: telegramN8NTeam:${chatId}
+            // - Legacy unified: team-network:${chatId}
+            // - Old agent-scoped: orchestratorAgent / n8nAgent
+            const resourceIdCandidates = [
+              `telegramN8NTeam:${String(chatIdQ)}`,
+              `team-network:${String(chatIdQ)}`,
+              'orchestratorAgent',
+              'n8nAgent',
+            ];
+            const agentKeys = ['orchestratorAgent', 'n8nAgent'];
+            const collected = [];
+            for (const agentKey of agentKeys) {
+              for (const resId of resourceIdCandidates) {
+                try {
+                  const agentInst = mastra.getAgent(agentKey);
+                  const memory = agentInst && typeof agentInst.getMemory === 'function' ? await agentInst.getMemory() : null;
+                  const maybeList = memory && memory.getThreadsByResourceId ? memory.getThreadsByResourceId : null;
+                  if (typeof maybeList === 'function') {
+                    const threads = await maybeList({ resourceId: resId, orderBy: 'updatedAt', sortDirection: 'DESC' });
+                    for (const t of threads || []) {
+                      const meta = t && t.metadata ? t.metadata : {};
+                      if (String(meta.user_id || '') === String(chatIdQ)) {
+                        collected.push({ id: t.id, title: t.title || null, resourceId: t.resourceId || resId, updatedAt: t.updatedAt });
+                      }
                     }
                   }
-                }
-              } catch {}
+                } catch {}
+              }
             }
-            // dedupe by id keeping latest updatedAt
-            const map = new Map<string, any>();
+            const map = new Map();
             for (const t of collected) {
               const ex = map.get(t.id);
-              if (!ex || new Date(t.updatedAt).getTime() > new Date(ex.updatedAt).getTime()) map.set(t.id, t);
+              if (!ex || new Date(t.updatedAt).getTime() > new Date(ex.updatedAt).getTime()) {
+                map.set(t.id, t);
+              }
             }
             return c.json({ threads: Array.from(map.values()) }, 200);
           }
 
-          // API: delete specific thread by id (across resourceIds)
+          // API: delete specific thread by id (agents' memory)
           if (c.req.method === 'POST' && pathname === '/threads/delete') {
-            const body = await c.req.json().catch(() => null) as any;
+            const body = await c.req.json().catch(() => null);
             if (!body || !body.chatId || !body.threadId) return c.json({ error: 'chatId and threadId required' }, 400);
             const contactId = String(body.chatId);
             const threadId = String(body.threadId);
             try {
-              const resourceIds = ['orchestratorAgent','n8nAgent'];
-              for (const resId of resourceIds) {
-                try {
-                  const agentInst = mastra.getAgent(resId as any);
-                  const memory = agentInst?.getMemory();
-                  const maybeDelete = (memory && (memory as any).deleteThread) ? (memory as any).deleteThread : null;
-                  if (typeof maybeDelete === 'function') {
-                    try { await maybeDelete({ resourceId: resId, threadId }); } catch {}
-                  }
-                } catch {}
+              const resourceIdCandidates = [`telegramN8NTeam:${String(contactId)}`, `team-network:${String(contactId)}`, 'orchestratorAgent', 'n8nAgent'];
+              const agentKeys = ['orchestratorAgent', 'n8nAgent'];
+              for (const agentKey of agentKeys) {
+                for (const resId of resourceIdCandidates) {
+                  try {
+                    const agentInst = mastra.getAgent(agentKey);
+                    const memory = agentInst && typeof agentInst.getMemory === 'function' ? await agentInst.getMemory() : null;
+                    const maybeDelete = memory && memory.deleteThread ? memory.deleteThread : null;
+                    if (typeof maybeDelete === 'function') {
+                      try { await maybeDelete({ resourceId: resId, threadId }); } catch {}
+                    }
+                  } catch {}
+                }
               }
-              // If deleted thread was current, clear pointer
               const dbUser = await UserRegistrationService.findByContactId(contactId);
               if (dbUser?.last_thread_id === threadId) {
                 await UserRegistrationService.updateLastThreadId({ contactId, lastThreadId: null });
@@ -637,7 +868,7 @@ export const mastra = new Mastra({
           }
 
           if (c.req.method === 'POST' && pathname === '/configs/save') {
-            const body = await c.req.json().catch(() => null) as any;
+            const body = await c.req.json().catch(() => null);
             if (!body || !body.chatId) return c.json({ error: 'chatId required' }, 400);
             const contactId = String(body.chatId);
             try {
@@ -666,28 +897,20 @@ export const mastra = new Mastra({
           }
 
           if (c.req.method === 'POST' && pathname === '/configs/new') {
-            const body = await c.req.json().catch(() => null) as any;
+            const body = await c.req.json().catch(() => null);
             if (!body || !body.chatId) return c.json({ error: 'chatId required' }, 400);
             const contactId = String(body.chatId);
             const threadId = `tg-${contactId}_${Date.now().toString()}`;
             try {
-              // Create threads with metadata user_id for both agents
-              const resourceIds = ['orchestratorAgent','n8nAgent'];
-              for (const resId of resourceIds) {
+              const resourceId = `telegramN8NTeam:${String(contactId)}`;
+              const agentKeys = ['orchestratorAgent', 'n8nAgent'];
+              for (const agentKey of agentKeys) {
                 try {
-                  const agentInst = mastra.getAgent(resId as any);
-                  const memory = agentInst?.getMemory();
-                  const maybeCreate = (memory && (memory as any).createThread) ? (memory as any).createThread : null;
+                  const agentInst = mastra.getAgent(agentKey);
+                  const memory = agentInst && typeof agentInst.getMemory === 'function' ? await agentInst.getMemory() : null;
+                  const maybeCreate = memory && memory.createThread ? memory.createThread : null;
                   if (typeof maybeCreate === 'function') {
-                    try {
-                      const payload = {
-                        resourceId: resId,
-                        threadId,
-                        title: 'Новый чат',
-                        metadata: { user_id: contactId },
-                      };
-                      await maybeCreate(payload);
-                    } catch {}
+                    try { await maybeCreate({ resourceId, threadId, title: 'Новый чат', metadata: { user_id: contactId } }); } catch {}
                   }
                 } catch {}
               }
@@ -699,25 +922,28 @@ export const mastra = new Mastra({
           }
 
           if (c.req.method === 'POST' && pathname === '/configs/reset') {
-            const body = await c.req.json().catch(() => null) as any;
+            const body = await c.req.json().catch(() => null);
             if (!body || !body.chatId) return c.json({ error: 'chatId required' }, 400);
             const contactId = String(body.chatId);
             try {
             const dbUser = await UserRegistrationService.findByContactId(contactId);
             const lastThreadId = dbUser?.last_thread_id || null;
-            if (lastThreadId) {
-              const resourceIds = ['orchestratorAgent','n8nAgent'];
-              for (const resId of resourceIds) {
-                try {
-                  const agentInst = mastra.getAgent(resId as any);
-                  const memory = agentInst?.getMemory();
-                  const maybeDelete = (memory && (memory as any).deleteThread) ? (memory as any).deleteThread : null;
-                  if (typeof maybeDelete === 'function') {
-                    try { await maybeDelete({ resourceId: resId, threadId: lastThreadId }); } catch {}
+              if (lastThreadId) {
+                const resourceIdCandidates = [`telegramN8NTeam:${String(contactId)}`, `team-network:${String(contactId)}`, 'orchestratorAgent', 'n8nAgent'];
+                const agentKeys = ['orchestratorAgent', 'n8nAgent'];
+                for (const agentKey of agentKeys) {
+                  for (const resId of resourceIdCandidates) {
+                    try {
+                      const agentInst = mastra.getAgent(agentKey);
+                      const memory = agentInst && typeof agentInst.getMemory === 'function' ? await agentInst.getMemory() : null;
+                      const maybeDelete = memory && memory.deleteThread ? memory.deleteThread : null;
+                      if (typeof maybeDelete === 'function') {
+                        try { await maybeDelete({ resourceId: resId, threadId: lastThreadId }); } catch {}
+                      }
+                    } catch {}
                   }
-                } catch {}
+                }
               }
-            }
               await UserRegistrationService.updateLastThreadId({ contactId, lastThreadId: null });
               return c.json({ success: true }, 200);
             } catch (e) {
@@ -725,23 +951,11 @@ export const mastra = new Mastra({
             }
           }
 
-          // Miniapp: activate user after payment (temporary)
-          if (c.req.method === 'POST' && pathname === '/miniapp/pay/activate') {
-            const body = await c.req.json().catch(() => null) as any;
-            if (!body || !body.chatId) return c.json({ error: 'chatId required' }, 400);
-            const contactId = String(body.chatId);
-            try {
-              await UserRegistrationService.setActive({ contactId, isActive: true });
-              await userCache.forceRefresh();
-              return c.json({ success: true }, 200);
-            } catch (e) {
-              return c.json({ success: false, error: String(e) }, 500);
-            }
-          }
+          // Miniapp: removed direct activation endpoint; activation возможна только через БД
         } catch {}
 
         // Populate runtimeContext from headers for downstream agent calls
-        const runtimeContext = c.get('runtimeContext') as RuntimeContext<UserRuntimeContext>;
+        const runtimeContext = c.get('runtimeContext');
         const userChatId = c.req.header('x-user-chat-id');
         const agentName = c.req.header('x-agent-name');
         const n8nApiKey = c.req.header('x-n8n-api-key');
@@ -761,7 +975,7 @@ export const mastra = new Mastra({
       name: 'n8n Team Network',
       instructions:
         'You are a network of n8n specialists: Architect, Builder, QA, Deployer. Route tasks to the best primitive and ensure credentials are created and workflows are activated when needed.',
-      model: ({ runtimeContext }) => orchestratorAgent.getModel({ runtimeContext }) as any,
+      model: ({ runtimeContext }) => orchestratorAgent.getModel({ runtimeContext }),
       agents: {
         architectAgent,
         builderAgent,
@@ -774,16 +988,19 @@ export const mastra = new Mastra({
   },
 });
 
+// mastraRef binding removed; use mastra.getAgent directly
+
 // Declare telegram bot variable but don't initialize yet
-export let telegramBot: TelegramIntegration | null = null;
+/** @type {TelegramIntegration | null} */
+export let telegramBot = null;
 const botRegistry = new BotRegistry();
 
 // Initialize the user cache and validation service FIRST (with retries)
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-async function initializeCriticalServicesWithRetry(maxAttempts: number = 5): Promise<void> {
+async function initializeCriticalServicesWithRetry(maxAttempts = 5) {
   let attempt = 0;
-  let lastError: unknown = null;
+  let lastError = null;
   const baseDelayMs = 2000;
   while (attempt < maxAttempts) {
     attempt += 1;
@@ -822,7 +1039,7 @@ initializeCriticalServicesWithRetry().then(async () => {
 });
 
 // Graceful shutdown handling
-const gracefulShutdown = async (signal: string) => {
+const gracefulShutdown = async (signal) => {
   console.log(`📥 Received ${signal}. Starting graceful shutdown...`);
   
   try {

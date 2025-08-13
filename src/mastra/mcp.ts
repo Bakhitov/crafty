@@ -60,8 +60,8 @@ export function getN8nApiKey(runtimeContext?: RuntimeContext<UserRuntimeContext>
     apiKey = process.env.N8N_API_KEY || null;
     console.log('🔍 [MCP] Final fallback to env API key:', apiKey ? 'Found' : 'Not found');
     if (!apiKey) {
-      console.error('❌ [MCP] No API key found anywhere!');
-      throw new NotFoundError('N8N_API_KEY');
+      console.warn('⚠️ [MCP] No API key found. Proceeding without N8N_API_KEY for offline-capable tools (discovery/validation/docs). n8n_* manager tools will be limited.');
+      apiKey = '';
     }
   }
 
@@ -184,10 +184,8 @@ class McpClientPool {
   }
 
   getClientForConfig(n8nUrl: string, apiKey: string): MCPClient {
-    if (!apiKey) {
-      throw new NotFoundError('N8N_API_KEY');
-    }
-    const cacheKey = `${n8nUrl}|${apiKey}`;
+    const normalizedKey = apiKey && apiKey.length > 0 ? apiKey : 'NO_API_KEY';
+    const cacheKey = `${n8nUrl}|${normalizedKey}`;
     const existing = this.keyToClient.get(cacheKey);
     if (existing) {
       this.touch(cacheKey);
@@ -214,7 +212,7 @@ class McpClientPool {
             LOG_LEVEL: effectiveLogLevel,
             DISABLE_CONSOLE_OUTPUT: effectiveDisableConsole,
             N8N_API_URL: n8nUrl,
-            N8N_API_KEY: apiKey,
+            N8N_API_KEY: apiKey || '',
           },
         },
       },
